@@ -16,6 +16,24 @@ from dotenv import load_dotenv
 from dotenv import load_dotenv
 from pyvis.network import Network
 import streamlit.components.v1 as components
+import json
+import shutil
+import zipfile  # Import the correct module
+from io import BytesIO
+import subprocess
+import io
+import logging
+import os
+
+# Set up logging
+log_file_path = os.path.join(os.getcwd(), "process_log.txt")
+logging.basicConfig(
+    filename=log_file_path,
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    filemode="w"  # Overwrite the log file each time the app runs
+)
+logger = logging.getLogger()
 
 # Load environment variables
 load_dotenv()
@@ -540,6 +558,9 @@ def create_pdf_from_pages(input_pdf: str, output_pdf: str, pages: list):
     except Exception as e:
         print(f"Error creating PDF: {e}")
         
+    
+    
+split_json_numerals = []
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -574,8 +595,11 @@ def process_pdf(pdf_path: str):
                 if pageList:
                     create_pdf_from_pages(pdf_path, f"output_{count}.pdf", pageList)
                     print(f"VendorName changed: New PDF created: output_{count}.pdf with pages: {pageList}")
+                    logger.info(f"VendorName changed: New PDF created: output_{count}.pdf with pages: {pageList}\n")
                     count += 1
+                    split_json_numerals.append(pageList[-1])
                     pageList = []  # Reset the page list for the next invoice
+                    
                 
                 current_customer_name = None  # Reset the current customer name for the new invoice
                 current_invoice_id = None  # Reset the current invoice ID for the new invoice
@@ -593,18 +617,21 @@ def process_pdf(pdf_path: str):
                 
         # Finalize the last invoice if any pages are left in pageList
         if pageList:
+            split_json_numerals.append(pageList[-1])
             create_pdf_from_pages(pdf_path, f"output_{count}.pdf", pageList)
             print(f"Remaining pages consolidated: New PDF created: output_{count}.pdf with pages: {pageList}")
+            logger.info(f"Remaining pages consolidated: New PDF created: output_{count}.pdf with pages: {pageList}\n")
+
         
             
         if not pageList:
             print("No valid invoice data found in the PDF.")
-
+            logger.info("No valid invoice data found in the PDF.\n")
     except Exception as e:
         print(f"An error occurred while processing the PDF: {e}")
-
+        logger.info(f"An error occurred while processing the PDF: {e}\n")
     print("\nProcessing completed!")
-    
+    logger.info("\nProcessing completed!\n")
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Function to delete a folder and its contents
 def delete_folder(folder_path):
@@ -619,42 +646,103 @@ def delete_folder(folder_path):
         return True
     return False
 
-#------------------------------------------------------------------------------------------------------------------------------------------------------------------
-previous_page_classification = ""
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Systme Prompt for the invoice classification with LLM help
 
 system_prompt_for_invoice_classification = f"""
-You are a highly specialized document classification AI focused on multi-page invoices and financial documents.
+You are a highly specialized document classification AI focused on multi-page German tax, financial, and medical documents.
 
-Your task is to classify each individual page into one of the predefined categories - craftsman invoice, medical invoice and captial returns
+Your task is to classify each individual page into one of the following categories:
 
-Follow these strict instructions:
+"Capital Returns"
 
-Classify based only on the visible content of the current page.
+"Medical Invoice"
 
-Consider the classification of the previous page, which will be provided. If the current page contains ambiguous or limited information, prefer to stay consistent with the previous page’s classification, unless there is strong evidence to switch.
+"Craftsman Invoice"
 
-Focus your classification decision primarily on:
+"None" (if the page does not clearly fit any of the above)
 
-- Organization names
-- Document headers and titles
-- Section headings
-- High-level language indicating the document’s purpose (e.g., medical, investment, construction).
+🚩 Core Rules
+Analyze each page independently.
+Do not use content from other pages for classification.
 
-Ignore detailed transaction lines, minor legal text, page numbers, and footers unless they clearly indicate a change in document type.
+Base your classification on visible content only, including:
 
-If the current page clearly signals a different type of document (e.g., from an invoice to a discharge summary), you must update the classification accordingly.
+Document headers and section titles
 
-If there is not enough evidence on the current page, default to the previous page’s classification.
+Organization names and professional titles
 
-The output should only include the classification result, without any additional text or explanation.
+Recognizable terms and phrases that signal document type
 
---------------------------------------------------------
+You must consider structural and transactional details like:
 
-Previous Page Classification: {previous_page_classification}
+Presence of cost breakdowns
+
+VAT (MwSt/USt) lines
+
+Document titles like "Rechnung", "Privatrezept", etc.
+
+Do not rely on fine legal disclaimers, footers, or isolated page numbers unless they indicate document purpose.
+
+🎯 Category Definitions
+"Capital Returns"
+Typical keywords and patterns:
+
+Terms: Kapitalertrag, Dividende, Zinsen, Wertpapier
+
+Documents: Jahressteuerbescheinigung, Erträgnisaufstellung
+
+Tax terms: Kapitalertragsteuer, Abgeltungsteuer
+
+Institutions: Depot, Fonds, Portfolio
+
+Exclusion Criteria:
+
+No signs of medical services or itemized services
+
+No VAT/MwSt service breakdowns
+
+"Medical Invoice"
+Typical indicators:
+
+Headers: Arzt, Praxis, Heilpraktiker, Krankenhaus, Apotheke
+
+Titles: Dr. med., Facharzt, Physiotherapeut
+
+Medical terms: Diagnose, Behandlung, Therapie, Patient
+
+Billing codes: GOP, EBM, ICD-10
+
+Insurance: Krankenkasse, Privatrezept, Kassenrezept
+
+"Craftsman Invoice"
+Typical indicators:
+
+Service keywords: Reparatur, Montage, Installation, Handwerkerleistung
+
+VAT breakdown: Presence of MwSt/USt lines and totals
+
+Document type: Contains Rechnung or Rechnung Nr.
+
+Trades: Sanitär, Heizung, Bauarbeiten, Elektroarbeiten
+
+Companies: GmbH & Co. KG, Meisterbetrieb, Handwerksbetrieb
+
+Often references a property address
+
+"None"
+Assign this category if:
+
+The page does not conclusively match any of the three categories above
+
+It contains ambiguous, generic, or mixed content
+
+You're unable to determine purpose confidently from visible elements
+
+------------
+Output: return only the class name and nothing else
 """
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -694,33 +782,48 @@ final_output = {}
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-def process_invoice_classification():
+def process_invoice_classification(classification_prompt):
     # Get the list of files in the output_files directory
     invoices = [f for f in os.listdir("./output_files") if f.endswith(".pdf")]
 
     for i, invoice in enumerate(invoices):
-        
         current_invoice = os.path.join("./output_files", invoice)
-        
-        previous_page_classification = ""
         print("Processing Current invoice: ", current_invoice)
-        
-        reader = PdfReader(current_invoice)
-        for page_num in range(len(reader.pages)):
-            # Generate the child pdf image path
-            child_pdf_image_path = os.path.join("./images", f"{page_num + 1}.png")
-            
-            # Generate the base64 URL for the image
-            base64_url = generate_base64_url(child_pdf_image_path)
 
-            # Call the LLM with the image data URL
-            LLM_response = call_LLM_for_invoice_classification(system_prompt_for_invoice_classification, base64_url)
+        try:
+            # Read the first page of the PDF
+            reader = PdfReader(current_invoice)
+            if len(reader.pages) > 0:
+                # Generate the child PDF path for the first page
+                first_page_pdf_path = os.path.join("./output_pages", f"{os.path.splitext(invoice)[0]}_page_1.pdf")
+                writer = PdfWriter()
+                writer.add_page(reader.pages[0])  # Add only the first page
+                os.makedirs("./output_pages", exist_ok=True)
+                with open(first_page_pdf_path, "wb") as output_pdf:
+                    writer.write(output_pdf)
+                print(f"Extracted first page of {invoice} to {first_page_pdf_path}")
 
-            if page_num == len(reader.pages) - 1:
-                # If it's the last page, add the classification to the final_output dictionary
-                final_output[invoice] = LLM_response.strip()
-                print(f"Final classification for {invoice}: {LLM_response.strip()}")
+                # Convert the first page to an image
+                first_page_image_path = os.path.join("./images", f"{os.path.splitext(invoice)[0]}_page_1.png")
+                convert_pdf_to_image(first_page_pdf_path, f"{os.path.splitext(invoice)[0]}_page_1")
+                print(f"Converted first page of {invoice} to image: {first_page_image_path}")
 
+                # Generate the base64 URL for the image
+                if os.path.exists(first_page_image_path):  # Ensure the file exists before accessing it
+                    base64_url = generate_base64_url(first_page_image_path)
+
+                    # Call the LLM with the image data URL
+                    LLM_response = call_LLM_for_invoice_classification(classification_prompt, base64_url)
+
+                    # Add the classification to the final_output dictionary
+                    final_output[invoice] = LLM_response.strip()
+                    print(f"Final classification for {invoice}: {LLM_response.strip()}")
+                else:
+                    print(f"Image file not found: {first_page_image_path}")
+            else:
+                print(f"No pages found in {invoice}. Skipping.")
+        except Exception as e:
+            print(f"An error occurred while processing {invoice}: {e}")
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Function to generate a Neo4j-like graph
 def generate_classification_graph(classification_results):
@@ -746,7 +849,19 @@ if st.button("Reset"):
     delete_folder("output_pages")
     delete_folder("output_files")
     delete_folder("images")
+    delete_folder("uploaded_files")
+    
+    # Close the logger's file handler
+    for handler in logger.handlers:
+        handler.close()
+        logger.removeHandler(handler)
         
+    # Delete the process_log.txt file if it exists
+    if os.path.exists("process_log.txt"):
+        os.remove("process_log.txt")
+        st.info("Deleted process_log.txt file.")
+    else:
+        st.warning("process_log.txt file does not exist.")
 
 # Initialize session state for managing app state
 if "uploaded_file_path" not in st.session_state:
@@ -794,134 +909,164 @@ if uploaded_file:
         st.session_state.default_correct_invoices = len([f for f in os.listdir(output_folder) if f.startswith("output_") and f.endswith(".pdf")])
         print(f"Default Correct Invoices: {st.session_state.default_correct_invoices}")
         st.success("Processing completed!")
-    else:
-        st.info("PDF has already been processed.")
+         # Save the split_json_numerals list to a JSON file
+        base_name = os.path.splitext(os.path.basename(pdf_path))[0]  # Extract the base name of the uploaded file
+        output_json_path = os.path.join("uploaded_files", f"{base_name}_splitpoints.json")  # Define the output JSON file path
+        try:
+            with open(output_json_path, "w", encoding="utf-8") as json_file:
+                json.dump(split_json_numerals, json_file, indent=4)
+            print(f"Split points saved to {output_json_path}")
+        except Exception as e:
+            print(f"Error saving split points to JSON: {e}")
+        else:
+            st.info("PDF has already been processed.")
 
+# Add a button to download the log file
+if st.button("Download Logs"):
+    with open(log_file_path, "r") as log_file:
+        st.download_button(
+            label="Download Logs as TXT",
+            data=log_file.read(),
+            file_name="process_log.txt",
+            mime="text/plain"
+        )
+    
+    
 # Display PDFs from the output_files folder with drag-and-drop functionality
 st.header("View and Adjust Split PDFs")
 output_folder = "./output_files"
 
+# Add a button to trigger the splitter.py script
+st.header("Run PDF Splitter")
 
+uploaded_invoices_folder = "uploaded_files"
+os.makedirs(uploaded_invoices_folder, exist_ok=True)  # Ensure the folder exists
 
-if os.path.exists(output_folder):
-    st.info("The following PDFs are available:")
-    files = sorted([f for f in os.listdir(output_folder) if f.endswith(".pdf")])
-    if files:
-        # Dictionary to store selected pages for merging
-        merge_dict = {}
-        delete_dict = {}
+# Check for PDF files in the "uploaded_invoices" folder
+pdf_files = [f for f in os.listdir(uploaded_invoices_folder) if f.endswith(".pdf")]
 
-        for file in files:
-            file_path = os.path.join(output_folder, file)
-            with st.expander(f"View {file}"):
-                try:
-                    # Display the PDF in an iframe
-                    with open(file_path, "rb") as pdf_file:
-                        pdf_data = pdf_file.read()
-                    pdf_viewer = f'<iframe src="data:application/pdf;base64,{base64.b64encode(pdf_data).decode()}" width="700" height="500" type="application/pdf"></iframe>'
-                    st.markdown(pdf_viewer, unsafe_allow_html=True)
-
-                    # Allow users to select pages for merging
-                    reader = PdfReader(file_path)
-                    page_numbers = list(range(1, len(reader.pages) + 1))  # 1-based page numbers
-                    selected_pages = st.multiselect(
-                        f"Select pages from {file} to merge into a new PDF:",
-                        options=page_numbers,
-                        key=f"merge_{file}"
-                    )
-                    if selected_pages:
-                        merge_dict[file] = selected_pages  # Store selected pages in the merge dictionary
-                        delete_dict[file] = selected_pages  # Auto-fill delete section with selected pages
-
-                    # Automatically generate a unique name for the merged PDF
-                    existing_files = [f for f in os.listdir(output_folder) if f.startswith("output_") and f.endswith(".pdf")]
-                    existing_numbers = [int(re.search(r"output_(\d+)", f).group(1)) for f in existing_files if re.search(r"output_(\d+)", f)]
-                    next_number = max(existing_numbers, default=0) + 1
-                    auto_generated_name = f"output_{next_number}"
-
-                    # Input for unique merged PDF name (pre-filled with auto-generated name)
-                    merged_pdf_name = st.text_input(f"Enter a unique name for the merged PDF from {file}:", value=auto_generated_name, key=f"merge_name_{file}")
-
-                    # Merge button for this specific PDF
-                    if st.button(f"Merge Selected Pages from {file}", key=f"merge_button_{file}"):
-                        if selected_pages and merged_pdf_name:
-                            try:
-                                new_pdf_path = os.path.join(output_folder, f"{merged_pdf_name}.pdf")
-                                writer = PdfWriter()
-
-                                for file, pages in merge_dict.items():
-                                    reader = PdfReader(os.path.join(output_folder, file))
-                                    for page_num in pages:
-                                        writer.add_page(reader.pages[page_num - 1])  # 1-based index
-
-                                # Save the new merged PDF
-                                with open(new_pdf_path, "wb") as out_file:
-                                    writer.write(out_file)
-
-                                # Remove merged pages from the original PDF
-                                remaining_writer = PdfWriter()
-                                for i, page in enumerate(reader.pages):
-                                    if i + 1 not in selected_pages:  # Keep pages not in selected_pages
-                                        remaining_writer.add_page(page)
-
-                                # Save the updated original PDF
-                                with open(file_path, "wb") as original_file:
-                                    remaining_writer.write(original_file)
-
-                                st.success(f"New merged PDF created: {new_pdf_path} and updated original PDF: {file}")
-                            except Exception as e:
-                                st.error(f"Error merging selected pages: {e}")
-                        else:
-                            st.warning("Please select pages and provide a unique name for the merged PDF.")
-
-                    # Section for deleting pages
-                    st.subheader(f"Delete Pages from {file}")
-                    delete_pages = st.multiselect(
-                        f"Select pages to delete from {file}:",
-                        options=page_numbers,
-                        default=delete_dict.get(file, []),  # Auto-fill with pages selected for merging
-                        key=f"delete_{file}"
-                    )
-                    if st.button(f"Delete Selected Pages from {file}", key=f"delete_button_{file}"):
-                        try:
-                            remaining_writer = PdfWriter()
-                            for i, page in enumerate(reader.pages):
-                                if i + 1 not in delete_pages:  # Keep pages not in delete_pages
-                                    remaining_writer.add_page(page)
-
-                            # Save the updated PDF
-                            with open(file_path, "wb") as updated_file:
-                                remaining_writer.write(updated_file)
-
-                            st.success(f"Deleted selected pages from {file}")
-                        except Exception as e:
-                            st.error(f"Error deleting pages from {file}: {e}")
-                except Exception as e:
-                    st.error(f"Error loading PDF {file}: {e}")
-    else:
-        st.warning("No PDFs found in the output_files folder.")
+if pdf_files:
+    st.info(f"Found {len(pdf_files)} PDF(s) in the 'uploaded_invoices' folder.")
 else:
-    st.warning("The output_files folder does not exist.")
+    st.warning("No PDF files found in the 'uploaded_invoices' folder.")
 
-# Button to calculate correctness score
-st.header("Check Split Accuracy")
+import shutil
+from io import BytesIO
 
-if st.button("Calculate Correctness Score"):
-    output_folder = "./output_files"
-    if os.path.exists(output_folder):
-        # Count the number of files in the output_files folder
-        num_files = len([f for f in os.listdir(output_folder) if f.endswith(".pdf")])
-        
-        if num_files > 0:
-            # Calculate correctness score
-            correctness_score = st.session_state.default_correct_invoices / num_files
-            st.success(f"Correctness Score: {correctness_score:.2f}")
-            st.info(f"Default Correct Invoices: {st.session_state.default_correct_invoices}, Total Files: {num_files}")
-        else:
-            st.warning("No files found in the output_files folder to calculate the score.")
+# Button to download all files in the uploaded_files folder as a ZIP
+st.header("Download Uploaded Files as ZIP")
+
+if os.path.exists(uploaded_invoices_folder) and len(os.listdir(uploaded_invoices_folder)) > 0:
+    # Create a ZIP file in memory
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+        for file_name in os.listdir(uploaded_invoices_folder):
+            file_path = os.path.join(uploaded_invoices_folder, file_name)
+            zip_file.write(file_path, arcname=file_name)  # Add file to the ZIP archive
+    zip_buffer.seek(0)  # Reset buffer position to the beginning
+
+    # Provide a download button for the ZIP file
+    st.download_button(
+        label="Download All Uploaded Files as ZIP",
+        data=zip_buffer,
+        file_name="uploaded_files.zip",
+        mime="application/zip"
+    )
+else:
+    st.warning("No files found in the 'uploaded_files' folder to download.")
+    
+if st.button("Start PDF Splitter"):
+    if pdf_files:
+        try:
+            # Resolve the absolute path for the working directory dynamically
+            cwd_path = os.path.dirname(os.path.abspath(__file__))
+            st.info(f"Resolved working directory: {cwd_path}")
+
+            # Check if the directory exists
+            if not os.path.exists(cwd_path):
+                st.error(f"The specified working directory does not exist: {cwd_path}")
+                raise FileNotFoundError(f"The directory {cwd_path} does not exist.")
+
+            for pdf_file in pdf_files:
+                pdf_path = os.path.join(uploaded_invoices_folder, pdf_file)
+                st.info(f"Processing file: {pdf_file}")
+
+                # Run the splitter.py script with the PDF file as an argument
+                result = subprocess.run(
+                    ["python", "splitter.py", pdf_path],  # Pass the PDF path as an argument
+                    cwd=cwd_path,  # Use the resolved absolute path
+                    capture_output=True,  # Capture stdout and stderr
+                    text=True  # Decode output as text
+                )
+
+                # Display the output or errors from the script
+                if result.returncode == 0:
+                    st.success(f"Splitter script executed successfully for {pdf_file}!")
+                    st.text(result.stdout)  # Display standard output
+                else:
+                    st.error(f"Error occurred while running the splitter script for {pdf_file}.")
+                    st.text(result.stderr)  # Display error output
+        except Exception as e:
+            st.error(f"An exception occurred: {e}")
     else:
-        st.warning("The output_files folder does not exist.")
+        st.warning("No PDF files to process in the 'uploaded_invoices' folder.")
         
+        
+# Section to upload multiple PDF files
+st.header("Upload PDF Files for Classification")
+
+# Allow multiple file uploads
+uploaded_files = st.file_uploader("Upload PDF files", type=["pdf"], accept_multiple_files=True)
+
+# Button to process the uploaded files
+if st.button("Upload and Clear Output Folder"):
+    output_folder = "./output_files"
+    
+    # Clear the output_files folder
+    if os.path.exists(output_folder):
+        for file in os.listdir(output_folder):
+            file_path = os.path.join(output_folder, file)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        st.info("Cleared all files in the 'output_files' folder.")
+    else:
+        os.makedirs(output_folder, exist_ok=True)
+        st.info("Created the 'output_files' folder.")
+
+    # Save the uploaded files to the output_files folder
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            file_path = os.path.join(output_folder, uploaded_file.name)
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.read())
+            st.success(f"Uploaded file: {uploaded_file.name}")
+    else:
+        st.warning("No files were uploaded.")
+
+# Section to manage system prompts
+st.header("Manage System Prompts")
+
+# Ensure the "./prompt" folder exists
+prompt_folder = "./prompt"
+os.makedirs(prompt_folder, exist_ok=True)
+
+# Get the list of available prompts
+prompt_files = [f for f in os.listdir(prompt_folder) if f.endswith(".txt")]
+
+# Dropdown to select a prompt
+selected_prompt = st.selectbox("Select a System Prompt", ["Select a prompt"] + prompt_files)
+
+# Display the content of the selected prompt
+if selected_prompt != "Select a prompt":
+    prompt_path = os.path.join(prompt_folder, selected_prompt)
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as file:
+            prompt_content = file.read()
+        st.text_area("Prompt Content", prompt_content, height=300, key="selected_prompt_content")
+    except Exception as e:
+        st.error(f"Error reading the selected prompt: {e}")
+            
+            
 # Section for classifying invoices
 st.header("Classify All Invoices")
 
@@ -931,7 +1076,7 @@ if st.button("Classify All Invoices"):
         st.info("Classifying all invoices...")
         try:
             # Call the process_invoice_classification function
-            process_invoice_classification()
+            process_invoice_classification(selected_prompt)
             st.success("All invoices have been classified successfully!")
             
             # Display the classification results
