@@ -59,6 +59,22 @@ ollama_model_nine = os.getenv("OLLAMA_MODEL_NINE")
 ollama_model_ten = os.getenv("OLLAMA_MODEL_TEN")
 poppler_path = r"C:\Users\HP Victus\Downloads\Release-24.08.0-0\poppler-24.08.0\Library\bin"  # Update this with the correct path to your Poppler installation - upto the bin folder
 
+
+#sample output
+
+sample_output = f"""{{
+"Name": "John Doe",
+"Address": "1234 Elm Street, Springfield, IL 62704, USA",
+"Phone Number": "+1-312-555-7890",
+"Email Address": "john.doe@example.com",
+"Date of Birth": "1990-07-15",
+"Nationality": "American",
+"Passport Number": "X12345678",
+"Visa Type": "Tourist",
+"Visa Expiry Date": "2026-09-30"
+}}"""
+
+
 #defining text variables to store the data extracted from the PDF using different models
 extracted_data_gpt4_image_only = ""
 extracted_data_gpt4_image_and_markdown = ""
@@ -210,8 +226,34 @@ top_p = st.sidebar.slider("Top P", 0.0, 1.0, 0.9)
 frequency_penalty = st.sidebar.slider("Frequency Penalty", 0.0, 1.0, 0.0)
 presence_penalty = st.sidebar.slider("Presence Penalty", 0.0, 1.0, 0.0)
 
-# text Area to write the prompt for the data extraction task for evaluation purposes
-data_extraction_system_prompt = st.text_area("Prompt", "Provide the prompt for the data extraction task here. eg:\n\nExtract the following information from the document:\n1. Name\n2. Address\n3. Phone Number\n4. Email Address\n5. Date of Birth\n6. Nationality\n7. Passport Number\n8. Visa Type\n9. Visa Expiry Date", height=350)
+# Section to select and view prompts from the "prompt_lab" folder
+st.header("Select and View Prompts")
+
+# Define the path to the "prompt_lab" folder
+prompt_lab_folder = "./prompt_lab"
+data_extraction_system_prompt=""
+
+# Ensure the folder exists
+if not os.path.exists(prompt_lab_folder):
+    st.warning(f"The folder '{prompt_lab_folder}' does not exist. Please create it and add some prompt files.")
+else:
+    # Get a list of all files in the "prompt_lab" folder
+    prompt_files = [f for f in os.listdir(prompt_lab_folder) if os.path.isfile(os.path.join(prompt_lab_folder, f))]
+
+    if prompt_files:
+        # Dropdown to select a prompt file
+        selected_prompt_file = st.selectbox("Select a prompt file:", prompt_files)
+
+        # Display the content of the selected prompt file
+        if selected_prompt_file:
+            prompt_file_path = os.path.join(prompt_lab_folder, selected_prompt_file)
+            with open(prompt_file_path, "r", encoding="utf-8") as file:
+                data_extraction_system_prompt = file.read()
+                
+
+            st.text_area("Selected Prompt Content", value=data_extraction_system_prompt, height=300)
+    else:
+        st.warning(f"No prompt files found in the '{prompt_lab_folder}' folder. Please add some prompt files.")
 
 # Providing option to upload a PDF file
 uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
@@ -345,7 +387,7 @@ def call_openai_vision_model(image_path, data_extracted_from_previous_pages, use
             "role": "system",
             "content":f"""{data_extraction_system_prompt}
             If the invoice is a multi-paged invoice you will be provided with the image of the current page
-            and daa extracted from the previous pages in a consolidated format.
+            and data extracted from the previous pages in a consolidated format.
             Your work is to extract the data from the current page and add it to the previous pages data in a
             structured format."""
         },
