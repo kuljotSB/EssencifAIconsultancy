@@ -8,6 +8,8 @@ Your task is to classify each individual page into one of the following categori
 
 "Craftsman Invoice"
 
+"Donation Receipt"
+
 "None" (if the page does not clearly fit any of the above)
 
 🚩 Core Rules
@@ -89,3 +91,7 @@ You're unable to determine purpose confidently from visible elements
 
 ------------
 Output: return only the class name and nothing else; please don't include any explanations
+
+SAMPLE Output:
+
+Capital Returns

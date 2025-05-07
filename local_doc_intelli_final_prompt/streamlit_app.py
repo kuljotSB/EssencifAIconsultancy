@@ -491,6 +491,7 @@ def document_intelligence(pdf_path, page_number):
         if current_page_vendor_name:
             if current_vendor_name and call_LLM_for_vendor_name_validation(validate_vendor_names_system_prompt,current_page_vendor_name, current_vendor_name)=="No":
                print(f"Vendor name changed from {current_vendor_name} to {current_page_vendor_name} on page {page_number}.")
+               logger.info(f"Vendor name changed from {current_vendor_name} to {current_page_vendor_name} on page {page_number}.")
                current_vendor_name = current_page_vendor_name  #Update the global variable
                return "VendorNameChanged" 
             
@@ -500,6 +501,7 @@ def document_intelligence(pdf_path, page_number):
         if current_page_invoice_id:
             if current_invoice_id and is_invoice_id_changed(current_page_invoice_id, current_invoice_id) is True:
                 print(f"InvoiceId changed from {current_invoice_id} to {current_page_invoice_id} on page {page_number}.")
+                logger.info(f"InvoiceId changed from {current_invoice_id} to {current_page_invoice_id} on page {page_number}.")
                 current_invoice_id = current_page_invoice_id #Update the global variable
                 return "InvoiceIdChanged"
             # Update the global variable if its the first page 
@@ -508,6 +510,7 @@ def document_intelligence(pdf_path, page_number):
         if current_page_customer_name:
             if current_customer_name and call_LLM_for_customer_name_validation(validate_person_names_system_prompt,current_page_customer_name, current_customer_name)=="No":
                 print(f"CustomerName changed from {current_customer_name} to {current_page_customer_name} on page {page_number}.")
+                logger.info(f"CustomerName changed from {current_customer_name} to {current_page_customer_name} on page {page_number}.")
                 current_customer_name = current_page_customer_name
                 return "CustomerNameChanged"
             # Update the global variable if its the first page
@@ -594,8 +597,15 @@ def process_pdf(pdf_path: str):
                 # Finalize the current invoice (exclude the current page)
                 if pageList:
                     create_pdf_from_pages(pdf_path, f"output_{count}.pdf", pageList)
-                    print(f"VendorName changed: New PDF created: output_{count}.pdf with pages: {pageList}")
-                    logger.info(f"VendorName changed: New PDF created: output_{count}.pdf with pages: {pageList}\n")
+                    if result=="VendorNameChanged":
+                        print(f"VendorName changed: New PDF created: output_{count}.pdf with pages: {pageList}")
+                        logger.info(f"VendorName changed: New PDF created: output_{count}.pdf with pages: {pageList}\n")
+                    if result=="InvoiceIdChanged":
+                        print(f"Invoice ID changed: New PDF created: output_{count}.pdf with pages: {pageList}")
+                        logger.info(f"Invoice ID changed: New PDF created: output_{count}.pdf with pages: {pageList}\n")
+                    if result=="CustomerNameChanged":
+                        print(f"CustomerName changed: New PDF created: output_{count}.pdf with pages: {pageList}")
+                        logger.info(f"CustomerName changed: New PDF created: output_{count}.pdf with pages: {pageList}\n")
                     count += 1
                     split_json_numerals.append(pageList[-1])
                     pageList = []  # Reset the page list for the next invoice
@@ -750,9 +760,7 @@ Output: return only the class name and nothing else
 # Function to classify the invoice using the LLM
 
 def call_LLM_for_invoice_classification(system_prompt, image_data_url):
-
-    
-
+   
     client = ChatCompletionsClient(
         endpoint=endpoint,
         credential=AzureKeyCredential(api_key),
@@ -783,7 +791,6 @@ final_output = {}
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 def process_invoice_classification(classification_prompt):
-    # Get the list of files in the output_files directory
     invoices = [f for f in os.listdir("./output_files") if f.endswith(".pdf")]
 
     for i, invoice in enumerate(invoices):
@@ -1056,6 +1063,7 @@ prompt_files = [f for f in os.listdir(prompt_folder) if f.endswith(".txt")]
 # Dropdown to select a prompt
 selected_prompt = st.selectbox("Select a System Prompt", ["Select a prompt"] + prompt_files)
 
+prompt_content = ""
 # Display the content of the selected prompt
 if selected_prompt != "Select a prompt":
     prompt_path = os.path.join(prompt_folder, selected_prompt)
@@ -1076,7 +1084,7 @@ if st.button("Classify All Invoices"):
         st.info("Classifying all invoices...")
         try:
             # Call the process_invoice_classification function
-            process_invoice_classification(selected_prompt)
+            process_invoice_classification(prompt_content)
             st.success("All invoices have been classified successfully!")
             
             # Display the classification results
