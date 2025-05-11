@@ -1,4 +1,5 @@
 import streamlit as st
+from openai import OpenAI
 import os
 from PyPDF2 import PdfReader, PdfWriter
 from pdf2image import convert_from_path
@@ -40,7 +41,7 @@ load_dotenv()
 endpoint = os.getenv("LLM_ENDPOINT")
 model_name = os.getenv("LLM_MODEL_NAME")
 api_key = os.getenv("LLM_API_KEY")
-poppler_path = r"C:\Users\HP VICTUS\Downloads\Release-24.08.0-0\poppler-24.08.0\Library\bin"
+openai_api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize session state for default_correct_invoices
 if "default_correct_invoices" not in st.session_state:
@@ -105,7 +106,7 @@ def convert_pdf_to_image(child_pdf_path, page_number):
 
 
     # Convert PDF pages to images
-    images = convert_from_path(child_pdf_path, poppler_path=poppler_path)
+    images = convert_from_path(child_pdf_path)
     # Save the images to the subfolder
     for i, img in enumerate(images):
             image_path = os.path.join(images_output_folder, f'{page_number}.png')
@@ -117,7 +118,8 @@ def convert_pdf_to_image(child_pdf_path, page_number):
 
 # Generate base64 URL for image
 def generate_base64_url(image_path):
-    """Generates a base64 URL for an image."""
+    
+    
     with open(image_path, "rb") as img_file:
         raw_data = img_file.read()
         image_data = base64.b64encode(raw_data).decode("utf-8")
@@ -126,110 +128,7 @@ def generate_base64_url(image_path):
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 
-system_prompt_for_invoice_split_LLM_vision = """ You are a helpful ai assistant meant to assist in clubbing together different PDFs into invoices.
-The invoices are in German. You will be passed with the images of the pages of the PDF and then you have to extract the text from the images. 
-The text that needs to extracted is according to an algorithm that I have desvised and I'll tell you more about it below.
-
-The algorithm keeps track of the vendor name, invoice ID, and customer name or address and does the following:
-a) If the vendor name is found and it is the same as the previous vendor name, it indicates a continuation of the same invoice.
-b) If the vendor name is found and it is different from the previous vendor name, it indicates a new invoice.
-c) If the invoice ID is found and it is the same as the previous invoice ID, it indicates a continuation of the same invoice.
-d) If the invoice ID is found and it is different from the previous invoice ID, it indicates a new invoice.
-e) If the customer address is found it indicates the starting page of the invoice.
-
-Your goal is to extract the following fields, based on the visible text in the image:
-- Vendor Name
-- Invoice ID
-- Customer Name
-
-
-
-### Extraction Patterns:
-
-- **Customer Name and Address Block Example:**
-Frau
-Maria Mustermann
-Musterallee 1
-54321 Musterdorf
-
-- Extract only the Customer Name: `Maria Mustermann`
-
-- **Invoice ID Example:**
-  - Valid formats:
-    - Rechnungsnummer: 1234567890
-    - Rechnungs-ID: ABCD123456
-    - Rechnung-Nr.: INV2024XY
-  - Invoice IDs typically appear near the top of the document and close to the customer name or billing address.
-  - Always look for these **German keywords** before extracting:
-    - "Rechnungsnummer"
-    - "Rechnungs-ID"
-    - "Rechnung-Nr."
-
-- Do NOT extract codes that:
-  - Appear in tabular sections, such as those under "Referenz", "ISIN", or "Depot/Konto-Nummer"
-  - Are short reference IDs like "K23000076" or ISINs
-  - Appear near securities or fund transaction details
-
-- Also ignore anything resembling a date or range:
-  - 01.01.2020
-  - 2020-12-31
-  - 01.01.2020 - 31.12.2020
-
-- Only extract the **actual invoice number** from the area where the **customer billing address appears** or where it's clearly labeled with the German keywords above.
-
-
-
- - **vendor Name Example:**
- Deka
-Investments
-
-Vendor Name: Deka Investments
-- It usually appears at the top of the page, often styled as a logo or header.
-- Also note that it might not cover the entire headers area and might be sitting in the top-right corner of the page, 
-top-left corner of the page, or even in the middle of the page.
-- It might also be in the form of a logo, so you need to be careful about that.
-
-
-### ✅ Output Format
-
-Output the following **only if at least one of Vendor Name or Customer Name is found**:
-
-More elaboration for this condition: lets say you find the vendor name but not the customer name, then you will output the vendor name and invoice id if it is found.
-If you find the customer name but not the vendor name, then you will output the customer name and invoice id if it is found.
-
-➡ Output only:
-Vendor Name: <vendor_name> 
-Customer Name: <customer_name>
-Invoice ID: <invoice_id> 
-
-**Rules:**
-- If **Vendor Name** is missing, omit the `Vendor Name:` line.
-- If **Invoice ID** is missing, omit the `Invoice ID:` line.
-- If **Customer Name** is missing, omit the `Customer Name:` line.
-
----
-
-
-### ❗Special Case
-
-If **neither Vendor Name nor Customer Name** is found:
-➡ Output only:
-Child Page
-
-Do **not** include any other text or explanations.
-
----
-
-
-
-
-
-
-
-Be accurate, consistent, and minimal.
-
-Just adhere to the format and do not add any extra text or explanation strictly because i will then use regex-based pattern matching 
-to route to the desired custom python logic using my custom python code """
+system_prompt_for_invoice_split_LLM_vision = ""
 
 
 #-----------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -264,6 +163,40 @@ def call_LLM_for_invoice_split(system_prompt, image_data_url):
     return response.choices[0].message.content
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Function to consolidate the PDF pages into consolidated invoices
+def call_ChatGPT_for_invoice_split(system_prompt, image_data_url):
+    
+    client = OpenAI(api_key=openai_api_key)
+    
+    response = client.responses.create(
+        model="gpt-4.1-mini",
+        input = [
+            {
+                "role":"system",
+                "content":f"{system_prompt}"
+            },
+            {
+                "role":"user",
+                "content":[
+                    {
+                        "type":"input_text",
+                        "text": "I have attaached the image"
+                    },
+                    {
+                        "type":"input_image",
+                        "image_url": f"{image_data_url}"
+                    }
+                ]
+            }
+        ],
+        max_output_tokens = 512,
+        temperature=0.2,
+        top_p=0.9
+    )
+    
+    print(f"Response: {response.output_text}")
+    return str(response.output_text)
+#---------------------------------------------------------------------------------------------------------------------------------------------
 
 # Function to extract fields from the LLM response using regex-based pattern matching
 def extract_fields_from_text(LLM_response):
@@ -293,40 +226,11 @@ def extract_fields_from_text(LLM_response):
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #Defining hashMap to keep track of the page numbers and their corresponding invoice IDs, vendor names, and customer names
-hashMap={}
+hashMap = {}
 
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
-validate_vendor_names_system_prompt = """
-You are an intelligent assistant that helps determine whether two company or vendor names refer to the same organization.
-
-You will be given two vendor names, and your task is to decide if they refer to the **same company or organization**, even if the wording, spelling, or formatting differs.
-
-These vendor names are from **German invoices**, so use your knowledge of German company naming conventions.
-
-Examples of valid matches include:
-- "Banque de Luxembourg" and "Banque Internationale à Luxembourg"
-- "Deka Investments" and "DekaBank Deutsche Girozentrale"
-- "Amazon Web Services Inc." and "AWS"
-- "grün form Garten und Landschaft GmbH" and "GRÜNFORM GmbH"
-- "Müller GmbH & Co. KG" and "Mueller KG"
-
-You should account for:
-- Synonyms or reworded names
-- Capitalization differences (e.g., GRÜNFORM vs grün form)
-- German umlauts and character variations (e.g., Ü vs UE)
-- Merged or split words (e.g., "grün form" vs "GRÜNFORM")
-- Legal suffixes such as "GmbH", "AG", "KG" being present or missing
-- Abbreviations or expansions (e.g., AWS vs Amazon Web Services)
-- Different language variants
-
-Your answer must be one of the following two words only:
-- Yes
-- No
-
-No explanations. No punctuation. No reasoning. Just output exactly one of: **Yes** or **No**.
-This is critical for downstream programmatic processing.
-"""
+validate_vendor_names_system_prompt = ""
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Function to validate vendor names using the LLM
@@ -360,21 +264,47 @@ def call_LLM_for_vendor_name_validation(system_prompt, vendor_name_1, vendor_nam
     print(f"Response: {response.choices[0].message.content}")
     return response.choices[0].message.content 
 
+#------------------------------------------------------------------------------------------------------------------------
+# Function to validate vendor names using the LLM
+
+def call_ChatGPT_for_vendor_name_validation(system_prompt, vendor_name_1, vendor_name_2):
+    client = OpenAI(api_key=openai_api_key)
+    
+    user_query = """ The two vendor names are:
+    Vendor Name 1: {}
+    Vendor Name 2: {}
+    """.format(vendor_name_1, vendor_name_2)
+
+    response = client.responses.create(
+        model="gpt-4.1-mini",
+        input = [
+            {
+                "role":"system",
+                "content":f"{system_prompt}"
+            },
+            {
+                "role":"user",
+                "content":[
+                    {
+                        "type":"input_text",
+                        "text":f"{user_query}"
+                    }
+                ]
+            }
+        ],
+        max_output_tokens = 512,
+        temperature=0.2,
+        top_p=0.9
+    )
+    
+    print(f"Response: {response.output_text}")
+    return str(response.output_text)
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Function to check if the invoice ID has changed
 
 def is_invoice_id_changed(invoice_id_1: str, invoice_id_2: str) -> bool:
-    """
-    Compares the numeric parts of two invoice IDs and determines if they are different.
-
-    Args:
-        invoice_id_1 (str): The first invoice ID.
-        invoice_id_2 (str): The second invoice ID.
-
-    Returns:
-        bool: True if the numeric parts are different, False otherwise.
-    """
     # Extract numeric parts using regex
     numeric_part_1 = re.sub(r'\D', '', invoice_id_1)
     numeric_part_2 = re.sub(r'\D', '', invoice_id_2)
@@ -382,39 +312,7 @@ def is_invoice_id_changed(invoice_id_1: str, invoice_id_2: str) -> bool:
     return numeric_part_1 != numeric_part_2
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
-validate_person_names_system_prompt = """
-You are an intelligent assistant that helps determine whether two person names refer to the **same individual**, even if the wording or formatting differs.
-
-You will be given two person names. Your task is to decide if they refer to the **same person**.
-
-These names are from **German business documents**, such as invoices, contracts, or email signatures. Use your knowledge of German naming conventions and honorifics.
-
-Examples of valid matches include:
-- "Max Mustermann" and "Maximilian Mustermann"
-- "Dr. Max Mustermann" and "Max Mustermann" (only if context suggests both refer to the same person)
-- "Anna-Lena Schmidt" and "Anna Lena Schmidt"
-- "Müller" and "Mueller" (considering umlaut substitution)
-
-Examples of non-matches include:
-- "Dr. Max Mustermann" and "Max Mustermann GmbH" (person vs company)
-- "Max Mustermann" and "Erika Mustermann"
-- "Max Mustermann" and "Mustermann KG"
-- "Dr. Max Mustermann" and "Herr Max Mustermann" (only if context is unclear)
-
-You should consider:
-- German honorifics and titles (e.g., Dr., Prof., Herr, Frau)
-- Variants of umlauts (e.g., Ü vs UE)
-- Capitalization differences
-- Hyphenated or compound names
-- Whether one name is a company or organization (e.g., contains GmbH, KG, AG)
-
-Your answer must be one of the following two words only:
-- Yes
-- No
-
-No explanations. No punctuation. No reasoning. Just output exactly one of: **Yes** or **No**.
-This is critical for downstream programmatic processing.
-"""
+validate_person_names_system_prompt = ""
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -449,8 +347,44 @@ def call_LLM_for_customer_name_validation(system_prompt, customer_name_1, custom
     return response.choices[0].message.content
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------ 
+# Function to validate vendor names using the LLM
+def call_ChatGPT_for_customer_name_validation(system_prompt, customer_name_1, customer_name_2):
+    client = OpenAI(api_key=openai_api_key)
+    
+    user_query = """ The two customer names are:
+    Customer Name 1: {}
+    Customer Name 2: {}
+    """.format(customer_name_1, customer_name_2)
+
+    response = client.responses.create(
+        model="gpt-4.1-mini",
+        input = [
+            {
+                "role":"system",
+                "content":f"{system_prompt}"
+            },
+            {
+                "role":"user",
+                "content":[
+                    {
+                        "type":"input_text",
+                        "text":f"{user_query}"
+                    }
+                ]
+            }
+        ],
+        max_output_tokens = 512,
+        temperature=0.2,
+        top_p=0.9
+    )
+    
+    print(f"Response: {response.output_text}")
+    return str(response.output_text)
+
+#----------------------------------------------------------------------------------------------------
 
 def document_intelligence(pdf_path, page_number):
+    
     import os
     import re
     try:
@@ -528,13 +462,6 @@ def document_intelligence(pdf_path, page_number):
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 def create_pdf_from_pages(input_pdf: str, output_pdf: str, pages: list):
-    """
-    Creates a new PDF containing only the specified pages from the input PDF.
-
-    :param input_pdf: Path to the original multi-page PDF.
-    :param output_pdf: Path to save the new PDF.
-    :param pages: List of page numbers (1-based index) to include in the new PDF.
-    """
     if not pages:
         print("No pages specified for creating the PDF.")
         return
@@ -562,7 +489,7 @@ def create_pdf_from_pages(input_pdf: str, output_pdf: str, pages: list):
         print(f"Error creating PDF: {e}")
         
     
-    
+# -------------------------------------------------------------------------------------------------------------------------------------
 split_json_numerals = []
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -643,8 +570,170 @@ def process_pdf(pdf_path: str):
     print("\nProcessing completed!")
     logger.info("\nProcessing completed!\n")
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
+def document_intelligence_using_ChatGPT(pdf_path, page_number):
+    
+    import os
+    import re
+    try:
+        global current_vendor_name  # Declare global to track VendorName across pages
+        
+        global current_invoice_id  # Declare global to track InvoiceId across pages
+        
+        global current_customer_name # Declare global to track CustomerName across pages
+        
+        #Generating the child pdf image path
+        child_pdf_image_path = os.path.join("./images", f"{page_number}.png")
+        
+        # Generating the base64 URL for the image
+        base64_url = generate_base64_url(child_pdf_image_path)  # Generate base64 URL for the image
+        
+        LLM_response = call_ChatGPT_for_invoice_split(system_prompt_for_invoice_split_LLM_vision, base64_url)  # Call the LLM with the image data URL
+        print("LLM Response for pdf base {}:".format(os.path.basename(pdf_path)))
+        print(LLM_response)
+        
+       # Define regex patterns for extracting fields
+        vendor_name_pattern = r"Vendor Name:\s*(.+)"
+        invoice_id_pattern = r"Invoice ID:\s*(.+)"
+        customer_name_pattern = r"Customer Name:\s*(.+)"
+       
+
+        # Perform regex-based extraction
+        vendor_name_match = re.search(vendor_name_pattern, LLM_response)
+        invoice_id_match = re.search(invoice_id_pattern, LLM_response)
+        customer_name_match = re.search(customer_name_pattern, LLM_response)
+
+        # Extract values or set to None if not found
+        current_page_vendor_name = vendor_name_match.group(1) if vendor_name_match else None
+        current_page_invoice_id = invoice_id_match.group(1) if invoice_id_match else None
+        current_page_customer_name = customer_name_match.group(1) if customer_name_match else None
+
+        
+        
+        if current_page_vendor_name:
+            if current_vendor_name and call_ChatGPT_for_vendor_name_validation(validate_vendor_names_system_prompt,current_page_vendor_name, current_vendor_name)=="No":
+               print(f"Vendor name changed from {current_vendor_name} to {current_page_vendor_name} on page {page_number}.")
+               logger.info(f"Vendor name changed from {current_vendor_name} to {current_page_vendor_name} on page {page_number}.")
+               current_vendor_name = current_page_vendor_name  #Update the global variable
+               return "VendorNameChanged" 
+            
+            #Update the global variable if its the first page
+            current_vendor_name = current_page_vendor_name #Update the local variable
+         
+        if current_page_invoice_id:
+            if current_invoice_id and is_invoice_id_changed(current_page_invoice_id, current_invoice_id) is True:
+                print(f"InvoiceId changed from {current_invoice_id} to {current_page_invoice_id} on page {page_number}.")
+                logger.info(f"InvoiceId changed from {current_invoice_id} to {current_page_invoice_id} on page {page_number}.")
+                current_invoice_id = current_page_invoice_id #Update the global variable
+                return "InvoiceIdChanged"
+            # Update the global variable if its the first page 
+            current_invoice_id = current_page_invoice_id  #Update the global variable  
+            
+        if current_page_customer_name:
+            if current_customer_name and call_ChatGPT_for_customer_name_validation(validate_person_names_system_prompt,current_page_customer_name, current_customer_name)=="No":
+                print(f"CustomerName changed from {current_customer_name} to {current_page_customer_name} on page {page_number}.")
+                logger.info(f"CustomerName changed from {current_customer_name} to {current_page_customer_name} on page {page_number}.")
+                current_customer_name = current_page_customer_name
+                return "CustomerNameChanged"
+            # Update the global variable if its the first page
+            current_customer_name = current_page_customer_name 
+        
+        # If no relevant fields are found, mark as "child page"
+        hashMap[page_number] = "child page"
+        print("page number : {} child page".format(page_number))
+        return "child page"
+    
+    except Exception as e:
+        print(f"Error processing page {page_number}: {e}")
+        return "error"
+#------------------------------------------------------------------------------------------------------------------------------------------------
+def process_pdf_using_ChatGPT(pdf_path: str):
+    """Reads a multi-page PDF and sends each page separately to ChatGPT Document Intelligence."""
+    try:
+        pdf_reader = PdfReader(pdf_path)
+        hashMap.clear()  # Clear the hashMap before processing
+        invoiceID = None
+        pageList = []  # To store all pages in the hashMap of the current invoice to be consolidated into a single PDF
+        count = 1 #for naming the output files
+        
+        global current_vendor_name
+        current_vendor_name = None  # Initialize the current VendorName
+        
+        global current_invoice_id
+        current_invoice_id = None  # Initialize the current InvoiceId
+        
+        global current_customer_name
+        current_customer_name = None  # Initialize the current CustomerName
+        
+        
+        for page_num in range(len(pdf_reader.pages)):
+            # Generate the pdf path for the individual invoice page
+            child_pdf_path = os.path.join("output_pages", f"{page_num + 1}.pdf")
+
+            # Call Azure Document Intelligence for this page
+            result = document_intelligence_using_ChatGPT(child_pdf_path, page_num + 1)  # Use 1-based page index
+            
+            if result=="VendorNameChanged" or result=="InvoiceIdChanged" or result=="CustomerNameChanged":
+                # Finalize the current invoice (exclude the current page)
+                if pageList:
+                    create_pdf_from_pages(pdf_path, f"output_{count}.pdf", pageList)
+                    if result=="VendorNameChanged":
+                        print(f"VendorName changed: New PDF created: output_{count}.pdf with pages: {pageList}")
+                        logger.info(f"VendorName changed: New PDF created: output_{count}.pdf with pages: {pageList}\n")
+                    if result=="InvoiceIdChanged":
+                        print(f"Invoice ID changed: New PDF created: output_{count}.pdf with pages: {pageList}")
+                        logger.info(f"Invoice ID changed: New PDF created: output_{count}.pdf with pages: {pageList}\n")
+                    if result=="CustomerNameChanged":
+                        print(f"CustomerName changed: New PDF created: output_{count}.pdf with pages: {pageList}")
+                        logger.info(f"CustomerName changed: New PDF created: output_{count}.pdf with pages: {pageList}\n")
+                    count += 1
+                    split_json_numerals.append(pageList[-1])
+                    pageList = []  # Reset the page list for the next invoice
+                    
+                
+                current_customer_name = None  # Reset the current customer name for the new invoice
+                current_invoice_id = None  # Reset the current invoice ID for the new invoice
+                current_vendor_name = None  # Reset the current vendor name for the new invoice
+                
+                hashMap.clear()  # Clear the hashMap for the new invoice
+                
+                #Process the current page again
+                result = document_intelligence_using_ChatGPT(child_pdf_path, page_num+1) #reprocess the current page
+            
+            # Add current page to the pageList
+            pageList.append(page_num + 1)  # Use 1-based page index
+            
+            
+                
+        # Finalize the last invoice if any pages are left in pageList
+        if pageList:
+            split_json_numerals.append(pageList[-1])
+            create_pdf_from_pages(pdf_path, f"output_{count}.pdf", pageList)
+            print(f"Remaining pages consolidated: New PDF created: output_{count}.pdf with pages: {pageList}")
+            logger.info(f"Remaining pages consolidated: New PDF created: output_{count}.pdf with pages: {pageList}\n")
+
+        
+            
+        if not pageList:
+            print("No valid invoice data found in the PDF.")
+            logger.info("No valid invoice data found in the PDF.\n")
+    except Exception as e:
+        print(f"An error occurred while processing the PDF: {e}")
+        logger.info(f"An error occurred while processing the PDF: {e}\n")
+    print("\nProcessing completed!")
+    logger.info("\nProcessing completed!\n")
+#-------------------------------------------------------------------------------------------------------------------------
+
 # Function to delete a folder and its contents
 def delete_folder(folder_path):
+    """
+    Recursively deletes a folder and all its contents.
+
+    Args:
+        folder_path (str): The path to the folder to be deleted.
+
+    Returns:
+        bool: True if the folder was successfully deleted, False if the folder does not exist.
+    """
     if os.path.exists(folder_path):
         for file in os.listdir(folder_path):
             file_path = os.path.join(folder_path, file)
@@ -661,105 +750,28 @@ def delete_folder(folder_path):
 
 # Systme Prompt for the invoice classification with LLM help
 
-system_prompt_for_invoice_classification = f"""
-You are a highly specialized document classification AI focused on multi-page German tax, financial, and medical documents.
-
-Your task is to classify each individual page into one of the following categories:
-
-"Capital Returns"
-
-"Medical Invoice"
-
-"Craftsman Invoice"
-
-"None" (if the page does not clearly fit any of the above)
-
-🚩 Core Rules
-Analyze each page independently.
-Do not use content from other pages for classification.
-
-Base your classification on visible content only, including:
-
-Document headers and section titles
-
-Organization names and professional titles
-
-Recognizable terms and phrases that signal document type
-
-You must consider structural and transactional details like:
-
-Presence of cost breakdowns
-
-VAT (MwSt/USt) lines
-
-Document titles like "Rechnung", "Privatrezept", etc.
-
-Do not rely on fine legal disclaimers, footers, or isolated page numbers unless they indicate document purpose.
-
-🎯 Category Definitions
-"Capital Returns"
-Typical keywords and patterns:
-
-Terms: Kapitalertrag, Dividende, Zinsen, Wertpapier
-
-Documents: Jahressteuerbescheinigung, Erträgnisaufstellung
-
-Tax terms: Kapitalertragsteuer, Abgeltungsteuer
-
-Institutions: Depot, Fonds, Portfolio
-
-Exclusion Criteria:
-
-No signs of medical services or itemized services
-
-No VAT/MwSt service breakdowns
-
-"Medical Invoice"
-Typical indicators:
-
-Headers: Arzt, Praxis, Heilpraktiker, Krankenhaus, Apotheke
-
-Titles: Dr. med., Facharzt, Physiotherapeut
-
-Medical terms: Diagnose, Behandlung, Therapie, Patient
-
-Billing codes: GOP, EBM, ICD-10
-
-Insurance: Krankenkasse, Privatrezept, Kassenrezept
-
-"Craftsman Invoice"
-Typical indicators:
-
-Service keywords: Reparatur, Montage, Installation, Handwerkerleistung
-
-VAT breakdown: Presence of MwSt/USt lines and totals
-
-Document type: Contains Rechnung or Rechnung Nr.
-
-Trades: Sanitär, Heizung, Bauarbeiten, Elektroarbeiten
-
-Companies: GmbH & Co. KG, Meisterbetrieb, Handwerksbetrieb
-
-Often references a property address
-
-"None"
-Assign this category if:
-
-The page does not conclusively match any of the three categories above
-
-It contains ambiguous, generic, or mixed content
-
-You're unable to determine purpose confidently from visible elements
-
-------------
-Output: return only the class name and nothing else
-"""
+system_prompt_for_invoice_classification = ""
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Function to classify the invoice using the LLM
 
 def call_LLM_for_invoice_classification(system_prompt, image_data_url):
+    """
+    Calls a Large Language Model (LLM) for invoice classification using a system prompt and an image data URL.
+    Args:
+        system_prompt (str): The system-level prompt that provides context or instructions for the LLM.
+        image_data_url (str): The URL of the image data to be classified.
+    Returns:
+        str: The content of the response message from the LLM, which contains the classification result.
+    Notes:
+        - The function uses the Azure OpenAI ChatCompletionsClient to interact with the LLM.
+        - The response is generated based on the provided system prompt and the image data.
+        - Parameters such as `max_tokens`, `temperature`, `top_p`, `presence_penalty`, and `frequency_penalty` 
+          are configured to control the behavior and determinism of the LLM's output.
+        - The `stop` parameter defines tokens that signal the end of the response.
+    """
+
    
     client = ChatCompletionsClient(
         endpoint=endpoint,
@@ -791,6 +803,31 @@ final_output = {}
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 def process_invoice_classification(classification_prompt):
+    """
+    Processes a list of invoice PDFs by extracting the first page, converting it to an image, 
+    and classifying the invoice using a language model.
+    Args:
+        classification_prompt (str): The prompt to be used for the language model to classify the invoice.
+    Workflow:
+        1. Iterates through all PDF files in the "./output_files" directory.
+        2. For each PDF:
+            - Reads the first page of the PDF.
+            - Saves the first page as a new PDF in the "./output_pages" directory.
+            - Converts the first page PDF to an image and saves it in the "./images" directory.
+            - Generates a base64 URL for the image.
+            - Calls a language model (LLM) with the classification prompt and the base64 image URL.
+            - Stores the classification result in the `final_output` dictionary.
+    Exceptions:
+        - Handles and logs any exceptions that occur during processing, such as file I/O errors or 
+          issues with PDF/image processing.
+    Notes:
+        - The function assumes the existence of helper functions:
+            - `convert_pdf_to_image`: Converts a PDF to an image.
+            - `generate_base64_url`: Generates a base64 URL for an image file.
+            - `call_LLM_for_invoice_classification`: Calls the language model for classification.
+        - The `final_output` dictionary is expected to be defined globally to store the results.
+        - The directories "./output_files", "./output_pages", and "./images" are used for input/output operations.
+    """
     invoices = [f for f in os.listdir("./output_files") if f.endswith(".pdf")]
 
     for i, invoice in enumerate(invoices):
@@ -834,6 +871,17 @@ def process_invoice_classification(classification_prompt):
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Function to generate a Neo4j-like graph
 def generate_classification_graph(classification_results):
+    """
+    Generates a classification graph using PyVis and saves it as an HTML file.
+    This function creates a network graph where each classification is represented
+    as a central node, and each invoice is represented as a connected node. The
+    graph is styled with specific colors and shapes for classifications and invoices.
+    Args:
+        classification_results (dict): A dictionary where keys are invoice identifiers
+            (e.g., invoice numbers) and values are their corresponding classifications.
+    Returns:
+        None: The graph is saved as an HTML file named "classification_graph.html".
+    """
     # Create a PyVis network graph
     net = Network(height="750px", width="100%", bgcolor="#222222", font_color="white")
     
@@ -880,6 +928,286 @@ if "processed" not in st.session_state:
 if "merge_dict" not in st.session_state:
     st.session_state.merge_dict = {}
 
+
+# Sidebar section to select LLM
+st.sidebar.header("Select LLM")
+
+# Dropdown to select LLM
+selected_llm = st.sidebar.selectbox(
+    "Choose the LLM for processing:",
+    ["Select an LLM", "ChatGPT", "Mistral"],
+    key="select_llm"
+)
+
+# Display the selected LLM
+if selected_llm != "Select an LLM":
+    st.sidebar.success(f"You have selected: {selected_llm}")
+else:
+    st.sidebar.warning("Please select an LLM to proceed.")
+
+# ---------------------------------SIDEBAR SECTION TO MANAGE PROMPT LAB-------------------------------------------------------------------
+
+# Sidebar section to manage system prompts
+st.sidebar.header("Manage System Prompts")
+
+# ----------------- INVOICE SPLIT PROMPT LAB ------------------------------------------
+  
+# Ensure the "./prompt" folder exists
+invoice_split_prompt_folder = "./invoice_split_prompts"
+os.makedirs(invoice_split_prompt_folder, exist_ok=True)
+
+# Prompt 1: system_prompt_for_invoice_split_LLM_vision
+st.sidebar.subheader("Invoice Split Prompt")
+st.sidebar.subheader("Make Sure to Reselect Prompts after editing or creating new ones from the drop-down for processing")
+# Get the list of available prompts
+prompt_files = [f for f in os.listdir(invoice_split_prompt_folder) if f.endswith(".txt")]
+
+# Dropdown to select a prompt
+selected_invoice_split_prompt = st.sidebar.selectbox("Select an Invoice Split System Prompt", ["Select a prompt"] + prompt_files, key="select_invoice_split_prompt")
+
+
+# Display the content of the selected prompt
+if selected_invoice_split_prompt != "Select a prompt":
+    prompt_path = os.path.join(invoice_split_prompt_folder, selected_invoice_split_prompt)
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as file:
+            system_prompt_for_invoice_split_LLM_vision = file.read()
+        system_prompt_for_invoice_split_LLM_vision = st.sidebar.text_area(
+            "Edit system_prompt_for_invoice_split_LLM_vision",
+            system_prompt_for_invoice_split_LLM_vision,
+            height=150,
+            key="system_prompt_for_invoice_split_LLM_vision_content"
+        )
+
+        
+        
+
+    except Exception as e:
+        st.error(f"Error reading the selected prompt: {e}")
+        
+     # Button to delete the selected prompt
+    if st.sidebar.button("Delete Selected Prompt", key="d4"):
+        try:
+            os.remove(prompt_path)
+            st.sidebar.success(f"Prompt '{selected_invoice_split_prompt}' deleted successfully!")
+            st.experimental_rerun()  # Refresh the app to update the dropdown
+        except Exception as e:
+            st.sidebar.error(f"Error deleting the prompt: {e}")
+            
+            
+# Button to show the "Create New Prompt" section
+if st.sidebar.button("Create New Invoice Split Prompt"):
+    st.session_state.show_create_prompt = True
+
+# Dynamically display the "Create New Prompt" section if the button is clicked
+if st.session_state.get("show_create_prompt", False):
+    st.sidebar.subheader("Create a New Invoice Split Prompt")
+    new_invoice_split_prompt_name = st.sidebar.text_input("Enter a name for the new split invoice prompt (e.g., 'new_prompt.txt')", "")
+    new_invoice_split_prompt_content = st.sidebar.text_area("Enter the content for the new invoice split prompt", "", height=300)
+
+    if st.sidebar.button("Save New Invoice Split Prompt"):
+        if new_invoice_split_prompt_name and new_invoice_split_prompt_name.endswith(".txt"):
+            new_prompt_path = os.path.join(invoice_split_prompt_folder, new_invoice_split_prompt_name)
+            if os.path.exists(new_prompt_path):
+                st.warning(f"A prompt with the name '{new_invoice_split_prompt_name}' already exists.")
+            else:
+                try:
+                    with open(new_prompt_path, "w", encoding="utf-8") as file:
+                        file.write(new_invoice_split_prompt_content)
+                    st.success(f"New prompt '{new_invoice_split_prompt_name}' created successfully!")
+                    st.session_state.show_create_prompt = False  # Hide the section after saving
+                    st.experimental_rerun()  # Refresh the app to show the new prompt in the dropdown
+                except Exception as e:
+                    st.error(f"Error creating new prompt: {e}")
+        else:
+            st.warning("Please enter a valid name for the new prompt (must end with '.txt').")
+            
+if st.sidebar.button("Save Invoice Split Prompt", key="save_invoice_split_prompt"):
+    try:
+        # Save the updated content to a file
+        with open(os.path.join(invoice_split_prompt_folder,selected_invoice_split_prompt), "w", encoding="utf-8") as file:
+            file.write(system_prompt_for_invoice_split_LLM_vision)
+        st.sidebar.success("Invoice Split Prompt saved successfully!")
+    except Exception as e:
+        st.sidebar.error(f"Error saving Invoice Split Prompt: {e}")
+
+# ------------------------ INVOICE SPLIT PROMPT LAB END -----------------------------------
+
+
+# --------------------------------- VENDOR NAME VALIDATION PROMPT LAB BEGIN ----------------------------------------
+
+# Prompt 2: validate_vendor_names_system_prompt
+st.sidebar.subheader("Vendor Names Validation Prompt")
+
+# Ensure the "./prompt" folder exists
+vendor_name_prompt_folder = "./vendor_name_check_prompts"
+os.makedirs(vendor_name_prompt_folder, exist_ok=True)
+
+st.sidebar.subheader("Make Sure to Reselect Prompts after editing or creating new ones from the drop-down for processing")
+
+# Get the list of available prompts
+vendor_name_prompt_files = [f for f in os.listdir(vendor_name_prompt_folder) if f.endswith(".txt")]
+
+# Dropdown to select a prompt
+selected_vendor_name_validation_prompt = st.sidebar.selectbox("Select a Vendor Name Validation System Prompt", ["Select a prompt"] + vendor_name_prompt_files, key="select_vendor_name_validation_prompt")
+
+# Display the content of the selected prompt
+if selected_vendor_name_validation_prompt != "Select a prompt":
+    prompt_path = os.path.join(vendor_name_prompt_folder, selected_vendor_name_validation_prompt)
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as file:
+            validate_vendor_names_system_prompt = file.read()
+        validate_vendor_names_system_prompt = st.sidebar.text_area(
+            "Edit system_prompt_for_vendor_name_validation",
+            validate_vendor_names_system_prompt,
+            height=150,
+            key="system_prompt_for_vendor_name_validation"
+        )
+
+        
+    
+    except Exception as e:
+        st.error(f"Error reading the selected prompt: {e}")
+    
+    
+    # Button to delete the selected prompt
+    if st.sidebar.button("Delete Selected Prompt", key="d3"):
+        try:
+            os.remove(prompt_path)
+            st.sidebar.success(f"Prompt '{selected_vendor_name_validation_prompt}' deleted successfully!")
+            st.experimental_rerun()  # Refresh the app to update the dropdown
+        except Exception as e:
+            st.sidebar.error(f"Error deleting the prompt: {e}")
+            
+# Button to show the "Create New Prompt" section
+if st.sidebar.button("Create New Vendor Name Validation Prompt"):
+    st.session_state.show_create_prompt = True
+    
+    
+# Dynamically display the "Create New Prompt" section if the button is clicked
+if st.session_state.get("show_create_prompt", False):
+    st.sidebar.subheader("Create a New Vendor Name Validation Prompt")
+    new_vendor_name_validation_prompt_name = st.sidebar.text_input("Enter a name for the new vendor name validation prompt (e.g., 'new_prompt.txt')", "")
+    new_vendor_name_validation_prompt_content = st.sidebar.text_area("Enter the content for the new vendor name validation prompt", "", height=300)
+
+    if st.sidebar.button("Save New Vendor Name Validation Prompt"):
+        if new_vendor_name_validation_prompt_name and new_vendor_name_validation_prompt_name.endswith(".txt"):
+            new_prompt_path = os.path.join(vendor_name_prompt_folder, new_vendor_name_validation_prompt_name)
+            if os.path.exists(new_prompt_path):
+                st.warning(f"A prompt with the name '{new_vendor_name_validation_prompt_name}' already exists.")
+            else:
+                try:
+                    with open(new_prompt_path, "w", encoding="utf-8") as file:
+                        file.write(new_vendor_name_validation_prompt_content)
+                    st.success(f"New prompt '{new_vendor_name_validation_prompt_name}' created successfully!")
+                    st.session_state.show_create_prompt = False  # Hide the section after saving
+                    st.experimental_rerun()  # Refresh the app to show the new prompt in the dropdown
+                except Exception as e:
+                    st.error(f"Error creating new prompt: {e}")
+        else:
+            st.warning("Please enter a valid name for the new prompt (must end with '.txt').")
+            
+if st.sidebar.button("Save Vendor Name Validation Prompt", key="save_vendor_name_validation_prompt"):
+    try:
+        # Save the updated content to a file
+        with open(os.path.join(vendor_name_prompt_folder,selected_vendor_name_validation_prompt), "w", encoding="utf-8") as file:
+            file.write(validate_vendor_names_system_prompt)
+        st.sidebar.success("Invoice Split Prompt saved successfully!")
+    except Exception as e:
+        st.sidebar.error(f"Error saving Invoice Split Prompt: {e}")
+
+# --------------------------- VENDOR NAME VALIDATION PROMPT LAB END --------------------------------------
+
+
+# ----------------------------------PERSON NAME VALIDATION PROMPT LAB BEGIN -------------------------------------
+
+
+# Prompt 3: validate_person_names_system_prompt
+st.sidebar.subheader("Person Names Validation System Prompt")
+
+# Ensure the "./prompt" folder exists
+person_name_prompt_folder = "./person_names_check_prompt"
+os.makedirs(person_name_prompt_folder, exist_ok=True)
+
+st.sidebar.subheader("Make Sure to Reselect Prompts after editing or creating new ones from the drop-down for processing")
+
+# Get the list of available prompts
+person_name_prompt_files = [f for f in os.listdir(person_name_prompt_folder) if f.endswith(".txt")]
+
+# Dropdown to select a prompt
+selected_person_name_validation_prompt = st.sidebar.selectbox("Select a Person Name Validation System Prompt", ["Select a prompt"] + person_name_prompt_files, key="select_person_name_validation_prompt")
+
+# Display the content of the selected prompt
+if selected_person_name_validation_prompt != "Select a prompt":
+    prompt_path = os.path.join(person_name_prompt_folder, selected_person_name_validation_prompt)
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as file:
+            validate_person_names_system_prompt = file.read()
+        validate_person_names_system_prompt = st.sidebar.text_area(
+            "Edit system_prompt_for_person_name_validation",
+            validate_person_names_system_prompt,
+            height=150,
+            key="system_prompt_for_person_name_validation"
+        )
+
+        
+    
+    except Exception as e:
+        st.error(f"Error reading the selected prompt: {e}")
+
+    # Button to delete the selected prompt
+    if st.sidebar.button("Delete Selected Prompt", key="d2"):
+        try:
+            os.remove(prompt_path)
+            st.sidebar.success(f"Prompt '{selected_person_name_validation_prompt}' deleted successfully!")
+            st.experimental_rerun()  # Refresh the app to update the dropdown
+        except Exception as e:
+            st.sidebar.error(f"Error deleting the prompt: {e}")
+            
+            
+# Button to show the "Create New Prompt" section
+if st.sidebar.button("Create New Person Name Validation Prompt"):
+    st.session_state.show_create_prompt = True
+    
+    
+# Dynamically display the "Create New Prompt" section if the button is clicked
+if st.session_state.get("show_create_prompt", False):
+    st.sidebar.subheader("Create a New Person Name Validation Prompt")
+    new_person_name_validation_prompt_name = st.sidebar.text_input("Enter a name for the new person name validation prompt (e.g., 'new_prompt.txt')", "")
+    new_person_name_validation_prompt_content = st.sidebar.text_area("Enter the content for the new person name validation prompt", "", height=300)
+
+    if st.sidebar.button("Save New Person Name Validation Prompt"):
+        if new_person_name_validation_prompt_name and new_person_name_validation_prompt_name.endswith(".txt"):
+            new_prompt_path = os.path.join(person_name_prompt_folder, new_person_name_validation_prompt_name)
+            if os.path.exists(new_prompt_path):
+                st.warning(f"A prompt with the name '{new_person_name_validation_prompt_name}' already exists.")
+            else:
+                try:
+                    with open(new_prompt_path, "w", encoding="utf-8") as file:
+                        file.write(new_person_name_validation_prompt_content)
+                    st.success(f"New prompt '{new_person_name_validation_prompt_name}' created successfully!")
+                    st.session_state.show_create_prompt = False  # Hide the section after saving
+                    st.experimental_rerun()  # Refresh the app to show the new prompt in the dropdown
+                except Exception as e:
+                    st.error(f"Error creating new prompt: {e}")
+        else:
+            st.warning("Please enter a valid name for the new prompt (must end with '.txt').")
+            
+if st.sidebar.button("Save Person Name Validation Prompt", key="save_person_name_validation_prompt"):
+    try:
+        # Save the updated content to a file
+        with open(os.path.join(person_name_prompt_folder,selected_person_name_validation_prompt), "w", encoding="utf-8") as file:
+            file.write(validate_person_names_system_prompt)
+        st.sidebar.success("Person Name Validation Prompt saved successfully!")
+    except Exception as e:
+        st.sidebar.error(f"Error saving Person Name Validation Prompt: {e}")
+
+
+# --------------------------- PERSON NAME VALIDATION PROMPT LAB END -----------------------------------------------------
+
+
+        
+        
 # Process uploaded PDF
 if uploaded_file:
     # Save uploaded file
@@ -908,25 +1236,45 @@ if uploaded_file:
         st.success("Converted PDF pages to images.")
     else:
         st.info("PDF pages have already been converted to images.")
-
-    if not os.path.exists("output_files") or len(os.listdir("output_files")) == 0:
-        st.info("Processing pages with Azure LLM...")
-        process_pdf(pdf_path)
-        output_folder = "./output_files"
-        st.session_state.default_correct_invoices = len([f for f in os.listdir(output_folder) if f.startswith("output_") and f.endswith(".pdf")])
-        print(f"Default Correct Invoices: {st.session_state.default_correct_invoices}")
-        st.success("Processing completed!")
-         # Save the split_json_numerals list to a JSON file
-        base_name = os.path.splitext(os.path.basename(pdf_path))[0]  # Extract the base name of the uploaded file
-        output_json_path = os.path.join("uploaded_files", f"{base_name}_splitpoints.json")  # Define the output JSON file path
-        try:
-            with open(output_json_path, "w", encoding="utf-8") as json_file:
-                json.dump(split_json_numerals, json_file, indent=4)
-            print(f"Split points saved to {output_json_path}")
-        except Exception as e:
-            print(f"Error saving split points to JSON: {e}")
-        else:
-            st.info("PDF has already been processed.")
+    if selected_llm=="Mistral":
+        if not os.path.exists("output_files") or len(os.listdir("output_files")) == 0:
+            st.info("Processing pages with Azure LLM...")
+            process_pdf(pdf_path)
+            output_folder = "./output_files"
+            st.session_state.default_correct_invoices = len([f for f in os.listdir(output_folder) if f.startswith("output_") and f.endswith(".pdf")])
+            print(f"Default Correct Invoices: {st.session_state.default_correct_invoices}")
+            st.success("Processing completed!")
+            # Save the split_json_numerals list to a JSON file
+            base_name = os.path.splitext(os.path.basename(pdf_path))[0]  # Extract the base name of the uploaded file
+            output_json_path = os.path.join("uploaded_files", f"{base_name}_splitpoints.json")  # Define the output JSON file path
+            try:
+                with open(output_json_path, "w", encoding="utf-8") as json_file:
+                    json.dump(split_json_numerals, json_file, indent=4)
+                print(f"Split points saved to {output_json_path}")
+            except Exception as e:
+                print(f"Error saving split points to JSON: {e}")
+            else:
+                st.info("PDF has already been processed.")
+    if selected_llm=="ChatGPT":
+        if not os.path.exists("output_files") or len(os.listdir("output_files")) == 0:
+            st.info("Processing pages with ChatGPT LLM...")
+            process_pdf_using_ChatGPT(pdf_path)
+            output_folder = "./output_files"
+            st.session_state.default_correct_invoices = len([f for f in os.listdir(output_folder) if f.startswith("output_") and f.endswith(".pdf")])
+            print(f"Default Correct Invoices: {st.session_state.default_correct_invoices}")
+            st.success("Processing completed!")
+            # Save the split_json_numerals list to a JSON file
+            base_name = os.path.splitext(os.path.basename(pdf_path))[0]  # Extract the base name of the uploaded file
+            output_json_path = os.path.join("uploaded_files", f"{base_name}_splitpoints.json")  # Define the output JSON file path
+            try:
+                with open(output_json_path, "w", encoding="utf-8") as json_file:
+                    json.dump(split_json_numerals, json_file, indent=4)
+                print(f"Split points saved to {output_json_path}")
+            except Exception as e:
+                print(f"Error saving split points to JSON: {e}")
+            else:
+                st.info("PDF has already been processed.")
+        
 
 # Add a button to download the log file
 if st.button("Download Logs"):
@@ -981,7 +1329,8 @@ if os.path.exists(uploaded_invoices_folder) and len(os.listdir(uploaded_invoices
     )
 else:
     st.warning("No files found in the 'uploaded_files' folder to download.")
-    
+
+st.info("If using Azure Website - don't click the Start PDF Splittler Button - instead start the Splitter on Local Machine")
 if st.button("Start PDF Splitter"):
     if pdf_files:
         try:
@@ -1000,7 +1349,7 @@ if st.button("Start PDF Splitter"):
 
                 # Run the splitter.py script with the PDF file as an argument
                 result = subprocess.run(
-                    ["python", "splitter.py", pdf_path],  # Pass the PDF path as an argument
+                    ["xvfb-run","python", "splitter.py", pdf_path],  # Pass the PDF path as an argument
                     cwd=cwd_path,  # Use the resolved absolute path
                     capture_output=True,  # Capture stdout and stderr
                     text=True  # Decode output as text
@@ -1051,7 +1400,7 @@ if st.button("Upload and Clear Output Folder"):
         st.warning("No files were uploaded.")
 
 # Section to manage system prompts
-st.header("Manage System Prompts")
+st.header("Manage Classification System Prompts")
 
 # Ensure the "./prompt" folder exists
 prompt_folder = "./prompt"
@@ -1063,6 +1412,8 @@ prompt_files = [f for f in os.listdir(prompt_folder) if f.endswith(".txt")]
 # Dropdown to select a prompt
 selected_prompt = st.selectbox("Select a System Prompt", ["Select a prompt"] + prompt_files)
 
+st.info("Make sure to reselect the classification prompt after creation or editing of existing or new prompts alike")
+
 prompt_content = ""
 # Display the content of the selected prompt
 if selected_prompt != "Select a prompt":
@@ -1070,9 +1421,56 @@ if selected_prompt != "Select a prompt":
     try:
         with open(prompt_path, "r", encoding="utf-8") as file:
             prompt_content = file.read()
-        st.text_area("Prompt Content", prompt_content, height=300, key="selected_prompt_content")
+        modified_content = st.text_area("Prompt Content", prompt_content, height=300, key="selected_prompt_content")
+
+        # Button to save changes to the selected prompt
+        if st.button("Save Changes"):
+            try:
+                with open(prompt_path, "w", encoding="utf-8") as file:
+                    file.write(modified_content)
+                st.success(f"Changes saved to {selected_prompt}")
+            except Exception as e:
+                st.error(f"Error saving changes: {e}")
+
+
     except Exception as e:
         st.error(f"Error reading the selected prompt: {e}")
+        
+    # Button to delete the selected prompt
+    if st.button("Delete Selected Prompt", key="d1"):
+        try:
+            os.remove(prompt_path)
+            st.sidebar.success(f"Prompt '{selected_prompt}' deleted successfully!")
+            st.experimental_rerun()  # Refresh the app to update the dropdown
+        except Exception as e:
+            st.sidebar.error(f"Error deleting the prompt: {e}")
+
+# Button to show the "Create New Prompt" section
+if st.button("Create New Prompt"):
+    st.session_state.show_create_prompt = True
+
+# Dynamically display the "Create New Prompt" section if the button is clicked
+if st.session_state.get("show_create_prompt", False):
+    st.subheader("Create a New Prompt")
+    new_prompt_name = st.text_input("Enter a name for the new prompt (e.g., 'new_prompt.txt')", "")
+    new_prompt_content = st.text_area("Enter the content for the new prompt", "", height=300)
+
+    if st.button("Save New Prompt"):
+        if new_prompt_name and new_prompt_name.endswith(".txt"):
+            new_prompt_path = os.path.join(prompt_folder, new_prompt_name)
+            if os.path.exists(new_prompt_path):
+                st.warning(f"A prompt with the name '{new_prompt_name}' already exists.")
+            else:
+                try:
+                    with open(new_prompt_path, "w", encoding="utf-8") as file:
+                        file.write(new_prompt_content)
+                    st.success(f"New prompt '{new_prompt_name}' created successfully!")
+                    st.session_state.show_create_prompt = False  # Hide the section after saving
+                    st.experimental_rerun()  # Refresh the app to show the new prompt in the dropdown
+                except Exception as e:
+                    st.error(f"Error creating new prompt: {e}")
+        else:
+            st.warning("Please enter a valid name for the new prompt (must end with '.txt').")
             
             
 # Section for classifying invoices
