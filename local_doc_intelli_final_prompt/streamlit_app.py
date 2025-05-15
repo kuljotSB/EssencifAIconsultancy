@@ -1031,7 +1031,7 @@ if selected_invoice_split_prompt != "Select a prompt":
         try:
             os.remove(prompt_path)
             st.sidebar.success(f"Prompt '{selected_invoice_split_prompt}' deleted successfully!")
-            st.experimental_rerun()  # Refresh the app to update the dropdown
+            
         except Exception as e:
             st.sidebar.error(f"Error deleting the prompt: {e}")
             
@@ -1057,7 +1057,7 @@ if st.session_state.get("show_create_prompt", False):
                         file.write(new_invoice_split_prompt_content)
                     st.success(f"New prompt '{new_invoice_split_prompt_name}' created successfully!")
                     st.session_state.show_create_prompt = False  # Hide the section after saving
-                    st.experimental_rerun()  # Refresh the app to show the new prompt in the dropdown
+                      
                 except Exception as e:
                     st.error(f"Error creating new prompt: {e}")
         else:
@@ -1116,7 +1116,7 @@ if selected_vendor_name_validation_prompt != "Select a prompt":
         try:
             os.remove(prompt_path)
             st.sidebar.success(f"Prompt '{selected_vendor_name_validation_prompt}' deleted successfully!")
-            st.experimental_rerun()  # Refresh the app to update the dropdown
+            
         except Exception as e:
             st.sidebar.error(f"Error deleting the prompt: {e}")
             
@@ -1142,7 +1142,7 @@ if st.session_state.get("show_create_prompt", False):
                         file.write(new_vendor_name_validation_prompt_content)
                     st.success(f"New prompt '{new_vendor_name_validation_prompt_name}' created successfully!")
                     st.session_state.show_create_prompt = False  # Hide the section after saving
-                    st.experimental_rerun()  # Refresh the app to show the new prompt in the dropdown
+                    
                 except Exception as e:
                     st.error(f"Error creating new prompt: {e}")
         else:
@@ -1201,7 +1201,7 @@ if selected_person_name_validation_prompt != "Select a prompt":
         try:
             os.remove(prompt_path)
             st.sidebar.success(f"Prompt '{selected_person_name_validation_prompt}' deleted successfully!")
-            st.experimental_rerun()  # Refresh the app to update the dropdown
+          
         except Exception as e:
             st.sidebar.error(f"Error deleting the prompt: {e}")
             
@@ -1228,7 +1228,7 @@ if st.session_state.get("show_create_prompt", False):
                         file.write(new_person_name_validation_prompt_content)
                     st.success(f"New prompt '{new_person_name_validation_prompt_name}' created successfully!")
                     st.session_state.show_create_prompt = False  # Hide the section after saving
-                    st.experimental_rerun()  # Refresh the app to show the new prompt in the dropdown
+                    
                 except Exception as e:
                     st.error(f"Error creating new prompt: {e}")
         else:
@@ -1491,7 +1491,7 @@ if selected_prompt != "Select a prompt":
         try:
             os.remove(prompt_path)
             st.sidebar.success(f"Prompt '{selected_prompt}' deleted successfully!")
-            st.experimental_rerun()  # Refresh the app to update the dropdown
+        
         except Exception as e:
             st.sidebar.error(f"Error deleting the prompt: {e}")
 
@@ -1516,7 +1516,7 @@ if st.session_state.get("show_create_prompt", False):
                         file.write(new_prompt_content)
                     st.success(f"New prompt '{new_prompt_name}' created successfully!")
                     st.session_state.show_create_prompt = False  # Hide the section after saving
-                    st.experimental_rerun()  # Refresh the app to show the new prompt in the dropdown
+                    
                 except Exception as e:
                     st.error(f"Error creating new prompt: {e}")
         else:
