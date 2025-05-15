@@ -25,6 +25,7 @@ import subprocess
 import io
 import logging
 import os
+from openai import AzureOpenAI
 
 # Set up logging
 log_file_path = os.path.join(os.getcwd(), "process_log.txt")
@@ -41,7 +42,16 @@ load_dotenv()
 endpoint = os.getenv("LLM_ENDPOINT")
 model_name = os.getenv("LLM_MODEL_NAME")
 api_key = os.getenv("LLM_API_KEY")
-openai_api_key = os.getenv("OPENAI_API_KEY")
+azure_openai_api_key = os.getenv("OPENAI_API_KEY")
+azure_openai_endpoint = os.getenv("OPENAI_API_ENDPOINT")
+
+# Setting LLM Specs
+temperature=0.2
+top_p=0.9
+max_tokens=512
+frequency_penalty=0.0
+presence_penalty=0.0
+
 
 # Initialize session state for default_correct_invoices
 if "default_correct_invoices" not in st.session_state:
@@ -152,11 +162,11 @@ def call_LLM_for_invoice_split(system_prompt, image_data_url):
             ])
         ],
         model=model_name,
-        max_tokens=512,  # You can increase this if needed, but shorter helps prevent hallucination
-        temperature=0.2,  # Maximum determinism
-        top_p=0.9,
-        presence_penalty=0.0,
-        frequency_penalty=0.0,
+        max_tokens=max_tokens,  # You can increase this if needed, but shorter helps prevent hallucination
+        temperature=temperature,  # Maximum determinism
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
         stop=["\n\n", "---", "Explanation", "Note:"]
     )
 
@@ -166,36 +176,47 @@ def call_LLM_for_invoice_split(system_prompt, image_data_url):
 # Function to consolidate the PDF pages into consolidated invoices
 def call_ChatGPT_for_invoice_split(system_prompt, image_data_url):
     
-    client = OpenAI(api_key=openai_api_key)
+    client = AzureOpenAI(
+    azure_endpoint = azure_openai_endpoint, 
+    api_key=azure_openai_api_key,  
+    api_version="2024-02-15-preview"
+    )
     
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input = [
+    response = client.chat.completions.create(
+        model="gpt-4.1-kiebidz",
+        messages=[
             {
-                "role":"system",
-                "content":f"{system_prompt}"
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{system_prompt}"
+                    }
+                ]
             },
             {
-                "role":"user",
-                "content":[
+                "role": "user",
+                "content": [
                     {
-                        "type":"input_text",
+                        "type": "text",
                         "text": "I have attaached the image"
                     },
                     {
-                        "type":"input_image",
-                        "image_url": f"{image_data_url}"
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"{image_data_url}"
+                    }
                     }
                 ]
             }
         ],
-        max_output_tokens = 512,
-        temperature=0.2,
-        top_p=0.9
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p
     )
     
-    print(f"Response: {response.output_text}")
-    return str(response.output_text)
+    print(f"Response: {response.choices[0].message.content}")
+    return str(response.choices[0].message.content)
 #---------------------------------------------------------------------------------------------------------------------------------------------
 
 # Function to extract fields from the LLM response using regex-based pattern matching
@@ -253,11 +274,11 @@ def call_LLM_for_vendor_name_validation(system_prompt, vendor_name_1, vendor_nam
                 TextContentItem(text=user_query),
             ])
         ],
-        max_tokens=2048,
-        temperature=0.2,
-        top_p=0.9,
-        presence_penalty=0.0,
-        frequency_penalty=0.0,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
         model=model_name
     )
     
@@ -268,37 +289,47 @@ def call_LLM_for_vendor_name_validation(system_prompt, vendor_name_1, vendor_nam
 # Function to validate vendor names using the LLM
 
 def call_ChatGPT_for_vendor_name_validation(system_prompt, vendor_name_1, vendor_name_2):
-    client = OpenAI(api_key=openai_api_key)
     
     user_query = """ The two vendor names are:
     Vendor Name 1: {}
     Vendor Name 2: {}
     """.format(vendor_name_1, vendor_name_2)
 
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input = [
+    client = AzureOpenAI(
+    azure_endpoint = azure_openai_endpoint, 
+    api_key=azure_openai_api_key,  
+    api_version="2024-02-15-preview"
+    )
+    
+    response = client.chat.completions.create(
+        model="gpt-4.1-kiebidz",
+        messages=[
             {
-                "role":"system",
-                "content":f"{system_prompt}"
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{system_prompt}"
+                    }
+                ]
             },
             {
-                "role":"user",
-                "content":[
+                "role": "user",
+                "content": [
                     {
-                        "type":"input_text",
-                        "text":f"{user_query}"
-                    }
+                        "type": "text",
+                        "text": f"{user_query}"
+                    },
                 ]
             }
         ],
-        max_output_tokens = 512,
-        temperature=0.2,
-        top_p=0.9
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p
     )
     
-    print(f"Response: {response.output_text}")
-    return str(response.output_text)
+    print(f"Response: {response.choices[0].message.content}")
+    return str(response.choices[0].message.content)
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -335,11 +366,11 @@ def call_LLM_for_customer_name_validation(system_prompt, customer_name_1, custom
                 TextContentItem(text=user_query),
             ])
         ],
-        max_tokens=2048,
-        temperature=0.2,
-        top_p=0.9,
-        presence_penalty=0.0,
-        frequency_penalty=0.0,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
         model=model_name
     )
     
@@ -349,37 +380,47 @@ def call_LLM_for_customer_name_validation(system_prompt, customer_name_1, custom
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------ 
 # Function to validate vendor names using the LLM
 def call_ChatGPT_for_customer_name_validation(system_prompt, customer_name_1, customer_name_2):
-    client = OpenAI(api_key=openai_api_key)
     
     user_query = """ The two customer names are:
     Customer Name 1: {}
     Customer Name 2: {}
     """.format(customer_name_1, customer_name_2)
 
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input = [
+    client = AzureOpenAI(
+    azure_endpoint = azure_openai_endpoint, 
+    api_key=azure_openai_api_key,  
+    api_version="2024-02-15-preview"
+    )
+    
+    response = client.chat.completions.create(
+        model="gpt-4.1-kiebidz",
+        messages=[
             {
-                "role":"system",
-                "content":f"{system_prompt}"
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{system_prompt}"
+                    }
+                ]
             },
             {
-                "role":"user",
-                "content":[
+                "role": "user",
+                "content": [
                     {
-                        "type":"input_text",
-                        "text":f"{user_query}"
+                        "type": "text",
+                        "text": f"{user_query}"
                     }
                 ]
             }
         ],
-        max_output_tokens = 512,
-        temperature=0.2,
-        top_p=0.9
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p
     )
     
-    print(f"Response: {response.output_text}")
-    return str(response.output_text)
+    print(f"Response: {response.choices[0].message.content}")
+    return str(response.choices[0].message.content)
 
 #----------------------------------------------------------------------------------------------------
 
@@ -787,11 +828,11 @@ def call_LLM_for_invoice_classification(system_prompt, image_data_url):
             ])
         ],
         model=model_name,
-        max_tokens=512,  # You can increase this if needed, but shorter helps prevent hallucination
-        temperature=0.2,  # Maximum determinism
-        top_p=0.9,
-        presence_penalty=0.0,
-        frequency_penalty=0.0,
+        max_tokens=max_tokens,  # You can increase this if needed, but shorter helps prevent hallucination
+        temperature=temperature,  # Maximum determinism
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
         stop=["\n\n", "---", "Explanation", "Note:"]
     )
     
@@ -1205,8 +1246,17 @@ if st.sidebar.button("Save Person Name Validation Prompt", key="save_person_name
 
 # --------------------------- PERSON NAME VALIDATION PROMPT LAB END -----------------------------------------------------
 
+# ------------------------------- SIDEBAR TO SET LLM SPECS --------------------------------------------------
+# Set parameters like temperature, max tokens, etc.
+st.sidebar.header("Model Parameters")
+st.sidebar.subheader("default tested values are displayed")
+temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.2)
+max_tokens = st.sidebar.slider("Max Tokens", 1, 4096, 2048)
+top_p = st.sidebar.slider("Top P", 0.0, 1.0, 0.9)
+frequency_penalty = st.sidebar.slider("Frequency Penalty", 0.0, 1.0, 0.0)
+presence_penalty = st.sidebar.slider("Presence Penalty", 0.0, 1.0, 0.0)
 
-        
+# ----------------------------------- LLM SPECS END --------------------------------------------------------------------
         
 # Process uploaded PDF
 if uploaded_file:
