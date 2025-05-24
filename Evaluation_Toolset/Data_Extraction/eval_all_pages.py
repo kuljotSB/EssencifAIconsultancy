@@ -1162,6 +1162,7 @@ if uploaded_file is not None:
         foundry_small_results = None
         foundry_large_results = None
         foundry_medium_results = None
+        microsoft_phi_four_results = None
 
         if "OpenAI GPT-4-Vision-Preview" in selected_models:
             st.write("Running with OpenAI GPT-4-Vision-Preview...")
