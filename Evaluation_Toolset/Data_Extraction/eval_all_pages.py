@@ -351,9 +351,10 @@ st.header("Define Fields to be Extracted")
 
 col1, col2 = st.columns(2)
 
+# ...existing code...
+
 with col1:
     st.subheader("Create or Edit DocType")
-    # If editing, prefill with selected values
     if st.session_state.get("edit_mode", False):
         doc_type = st.text_input("Edit Document Type", st.session_state.get("edit_doc_type", ""), key="doc_type_input_edit")
         fields_table = st.session_state.get("edit_fields_table", [{"Field": "", "Description": "", "Format": ""}])
@@ -366,12 +367,10 @@ with col1:
             height=300,
         )
         if st.button("Save Changes", key="save_edit_btn"):
-            # Remove old DocType and upsert new one
             client = get_cosmos_client()
             if client:
                 db = client.get_database_client("kiebidz")
                 container = db.get_container_client("DocumentFields")
-                # Find and delete old item
                 for item in get_all_doc_types(container):
                     if item["DocType"] == st.session_state["edit_doc_type"]:
                         container.delete_item(item, partition_key=item["DocType"])
@@ -379,6 +378,7 @@ with col1:
                 upsert_document_fields(doc_type.strip(), edited_df.to_dict(orient="records"))
                 st.success(f"DocType '{doc_type}' updated!")
                 st.session_state.edit_mode = False
+                st.session_state.edit_fields_table = edited_df.to_dict(orient="records")  # update only on save
         if st.button("Cancel Edit", key="cancel_edit_btn"):
             st.session_state.edit_mode = False
     else:
@@ -395,12 +395,14 @@ with col1:
             width=500,
             height=300,
         )
-        st.session_state.fields_table = edited_df.to_dict(orient="records")
         if st.button("Save/Upsert Fields Table to Cosmos DB", key="save_new_btn"):
             if doc_type.strip():
+                st.session_state.fields_table = edited_df.to_dict(orient="records")  # update only on save
                 upsert_document_fields(doc_type.strip(), st.session_state.fields_table)
             else:
                 st.warning("Please enter a document type.")
+
+# ...existing code...
 
 with col2:
     st.subheader("Select, Edit, or Delete DocType")
