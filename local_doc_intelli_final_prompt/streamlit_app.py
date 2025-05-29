@@ -35,6 +35,14 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     filemode="w"  # Overwrite the log file each time the app runs
 )
+
+
+# Suppress Azure/OpenAI SDK HTTP INFO logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("azure").setLevel(logging.WARNING)
+
 logger = logging.getLogger()
 
 # Load environment variables
@@ -92,9 +100,9 @@ def split_parent_pdf_into_individual_pages(input_pdf_path):
         with open(output_pdf_path, "wb") as output_pdf:
             writer.write(output_pdf)
         
-        print(f"Saved: {output_pdf_path}")
+        
 
-    print("PDF split completed!")
+    
     
     return len(reader.pages)  # Return the number of pages
     
@@ -112,7 +120,6 @@ def convert_pdf_to_image(child_pdf_path, page_number):
     os.makedirs(images_output_folder, exist_ok=True)
 
 
-    print(f"Processing: {child_pdf_path}")
 
 
     # Convert PDF pages to images
@@ -122,7 +129,6 @@ def convert_pdf_to_image(child_pdf_path, page_number):
             image_path = os.path.join(images_output_folder, f'{page_number}.png')
             img.save(image_path, 'PNG')
 
-    print(f"Saved images for {os.path.basename(child_pdf_path)} in {images_output_folder}")
     
 #------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -183,7 +189,7 @@ def call_ChatGPT_for_invoice_split(system_prompt, image_data_url):
     )
     
     response = client.chat.completions.create(
-        model="gpt-4.1-kiebidz",
+        model="gpt-4.1",
         messages=[
             {
                 "role": "system",
@@ -215,7 +221,6 @@ def call_ChatGPT_for_invoice_split(system_prompt, image_data_url):
         top_p=top_p
     )
     
-    print(f"Response: {response.choices[0].message.content}")
     return str(response.choices[0].message.content)
 #---------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -282,7 +287,7 @@ def call_LLM_for_vendor_name_validation(system_prompt, vendor_name_1, vendor_nam
         model=model_name
     )
     
-    print(f"Response: {response.choices[0].message.content}")
+    
     return response.choices[0].message.content 
 
 #------------------------------------------------------------------------------------------------------------------------
@@ -302,7 +307,7 @@ def call_ChatGPT_for_vendor_name_validation(system_prompt, vendor_name_1, vendor
     )
     
     response = client.chat.completions.create(
-        model="gpt-4.1-kiebidz",
+        model="gpt-4.1",
         messages=[
             {
                 "role": "system",
@@ -328,7 +333,8 @@ def call_ChatGPT_for_vendor_name_validation(system_prompt, vendor_name_1, vendor
         top_p=top_p
     )
     
-    print(f"Response: {response.choices[0].message.content}")
+    
+    
     return str(response.choices[0].message.content)
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -374,7 +380,7 @@ def call_LLM_for_customer_name_validation(system_prompt, customer_name_1, custom
         model=model_name
     )
     
-    print(f"Response: {response.choices[0].message.content}")
+   
     return response.choices[0].message.content
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------ 
@@ -393,7 +399,7 @@ def call_ChatGPT_for_customer_name_validation(system_prompt, customer_name_1, cu
     )
     
     response = client.chat.completions.create(
-        model="gpt-4.1-kiebidz",
+        model="gpt-4.1",
         messages=[
             {
                 "role": "system",
@@ -419,7 +425,6 @@ def call_ChatGPT_for_customer_name_validation(system_prompt, customer_name_1, cu
         top_p=top_p
     )
     
-    print(f"Response: {response.choices[0].message.content}")
     return str(response.choices[0].message.content)
 
 #----------------------------------------------------------------------------------------------------
@@ -504,7 +509,7 @@ def document_intelligence(pdf_path, page_number):
 
 def create_pdf_from_pages(input_pdf: str, output_pdf: str, pages: list):
     if not pages:
-        print("No pages specified for creating the PDF.")
+        
         return
 
     try:
@@ -1326,16 +1331,17 @@ if uploaded_file:
                 st.info("PDF has already been processed.")
         
 
-# Add a button to download the log file
-if st.button("Download Logs"):
-    with open(log_file_path, "r") as log_file:
+# ...existing code after split_json_numerals is saved...
+
+# Button to download the process_log.txt file (all print/log statements)
+if os.path.exists("process_log.txt"):
+    with open("process_log.txt", "r") as log_file:
         st.download_button(
-            label="Download Logs as TXT",
+            label="Download Split Log (process_log.txt)",
             data=log_file.read(),
             file_name="process_log.txt",
             mime="text/plain"
         )
-    
     
 # Display PDFs from the output_files folder with drag-and-drop functionality
 st.header("View and Adjust Split PDFs")
