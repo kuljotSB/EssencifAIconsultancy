@@ -61,26 +61,33 @@ if "process_pdf_clicked" not in st.session_state:
 # Load environment variables
 mistral_ocr_key = os.getenv("MISTRAL_OCR_KEY")
 gpt_model_deployment_name = os.getenv("GPT_MODEL_DEPLOYMENT_NAME")
-azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-azure_openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+azure_openai_swedencentral_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+azure_openai_swedencentral_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
 project_connection_string = os.getenv("PROJECT_CONNECTION_STRING")
 mistral_small_deployment_name = os.getenv("MISTRAL_SMALL_MODEL_DEPLOYMENT_NAME")
 mistral_small_endpoint = os.getenv("MISTRAL_SMALL_MODEL_ENDPOINT")
 mistral_small_api_key = os.getenv("MISTRAL_SMALL_MODEL_API_KEY")
-microsoft_phi_four_instruct_deployment_name = os.getenv("MICROSOFT_PHI4_MODEL_DEPLOYMENT_NAME")
-microsoft_phi_four_instruct_endpoint = os.getenv("MICROSOFT_PHI4_MODEL_ENDPOINT")
-microsoft_phi_four_instruct_api_key = os.getenv("MICROSOFT_PHI4_MODEL_API_KEY")
+o4_mini_model_deployment_name = os.getenv("O4_MODEL_DEPLOYMENT_NAME")
+azure_openai_eastus_endpoint = os.getenv("AZURE_OPENAI_EAST_US_ENDPOINT")
+azure_openai_eastus_api_key = os.getenv("AZURE_OPENAI_EAST_US_API_KEY")
 cosmosdb_connection_string = os.getenv("COSMOSDB_CONNECTION_STRING")
+pixtral_twelveb_latest = "pixtral-12b-latest"
+pixtral_large_latest = "pixtral-large-latest"
+mistral_medium_latest = "mistral-medium-latest"
 
 
                  
 # Giving option via dropdown to select multiple models
 st.sidebar.header("Select Models")
 model_options = {
-    "Microsoft Phi-4 Instruct": microsoft_phi_four_instruct_deployment_name,
+    "o4-mini": o4_mini_model_deployment_name,
     "Mistral Small 2503": mistral_small_deployment_name,
-    "OpenAI GPT-4-Vision-Preview": gpt_model_deployment_name
+    "OpenAI GPT-4-Vision-Preview": gpt_model_deployment_name,
+    "pixtral-12b-latest": pixtral_twelveb_latest,
+    "pixtral-large-latest":pixtral_large_latest,
+    "mistral-medium-latest":mistral_medium_latest
 }
+
 selected_models = st.sidebar.multiselect("Select models to use:", list(model_options.keys()))
 
 # Set parameters like temperature, max tokens, etc.
@@ -602,37 +609,27 @@ if st.button("Generate Complete Prompt"):
         }}
     ]
     
-    Please strictly and strictly don't return a response like this:
-    
+    STRICT OUTPUT INSTRUCTIONS:
+    - Do NOT include any code blocks, markdown, or formatting (no triple backticks, no ```json, etc.).
+    - Do NOT include any explanations, comments, or extra text.
+    - Output ONLY the JSON array, nothing else.
+
+    Example of correct output:
+    [
+        {{"field": "name", "value": "Dr. Max Mustermann"}},
+        {{"field": "invoicetotal", "value": "61.00"}},
+        {{"field": "vendorname", "value": "NABU"}}
+    ]
+
+    INCORRECT OUTPUTS (do NOT do this):
     ```json
     [
-        {{
-        "field":"name",
-        "value":"John Doe"
-        }}
-    ]
-    ```
-    
-    Wrong Response Format: 
-        ```json
-    [
-        {{
-        "field":"Name",
-        "value":"Dr. Max Mustermann"
-    }}
-    ]
-    ```
-    
-    Correct Response Format:
-    
-    [
-        {{
-        "field":"Name",
-        "value":"Dr. Max Mustermann"
-    }}
+        {{"field": "name", "value": "Dr. Max Mustermann"}}
     ]
     
     This is because the json struct will be used to display in an excel table like format so the correct format is extremely important
+    
+    Make sure that the "field" and "value" key of the json output is in small-case
     """
     
     json_extraction_instructions = f""" Extract only the fields specified below in the JSON format. The Field, Description, and Format are as follows: \n"""
@@ -749,7 +746,7 @@ def generate_markdown_from_mistral_OCR(pdf_path):
     return str((ocr_response))
 
 # Creating Function to Call GPT-4 Vision Model
-def call_openai_vision_model(user_prompt, pdf_path):
+def call_openai_vision_model(user_prompt, pdf_path, model_name, azure_openai_endpoint, azure_openai_api_key):
     
     # Creating the Azure OpenAI Client
     client = AzureOpenAI(
@@ -806,20 +803,88 @@ def call_openai_vision_model(user_prompt, pdf_path):
                         "content": image_dict
                     })
     
-    # Call the OpenAI GPT-4 Vision model
-    completion = client.chat.completions.create(
-        model=gpt_model_deployment_name,
-        messages=chat_prompt,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        frequency_penalty=frequency_penalty,
-        presence_penalty=presence_penalty,
-    )
-    
+        # Call the OpenAI GPT-4 Vision model
+    if model_name == "o4-mini":
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=chat_prompt,
+            max_completion_tokens = max_tokens,
+        )
+    else:
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=chat_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+        )
+        
     print("Response from GPT-4 Vision Model: {}".format(completion.choices[0].message.content))
     
     return completion.choices[0].message.content
+
+def call_mistral_api_model(user_prompt, pdf_path, model_name):
+    # Initialize the Mistral client
+    client = Mistral(api_key=mistral_ocr_key)
+    
+     #prepare the chat prompt
+    image_dict = []
+    
+    if pdf_path is not None:
+        # Get the list of image files in the images folder
+        images_folder = './images'
+        image_files = [f for f in os.listdir(images_folder) if f.endswith('.png')]
+        # generating base64 URL for each image
+        for image_file in image_files:
+            image_path = os.path.join(images_folder, image_file)
+            base64_path = generate_base64_url(image_path)
+            
+            image_dict.append(
+                {
+                    "type":"text",
+                    "text": "\n"
+                }
+            )
+            
+            image_dict.append(
+                {
+                    "type":"image_url",
+                    "image_url": base64_path
+                    
+                }
+            )
+    
+    #appending the user prompt finally at the end to the image_dict
+    image_dict.append(
+        {
+            "type":"text",
+            "text":f"{user_prompt}"
+        }
+    )
+    
+    # finally preparing the chat prompt/messages array
+    
+    messages = [
+        {
+            "role":"system",
+            "content": "You are a helpful AI assistant"
+        },
+        {
+            "role":"user",
+            "content": image_dict
+        }
+    ]
+    
+    # Get the chat response
+    chat_response = client.chat.complete(
+        model=model_name,
+        messages=messages
+    )
+
+    # Print the content of the response
+    return chat_response.choices[0].message.content
 
 def call_ai_foundry_catalog_model(user_prompt, pdf_path, ai_foundry_model_endpoint, ai_foundry_model_api_key):
     client = ChatCompletionsClient(
@@ -898,9 +963,9 @@ def call_ai_foundry_catalog_model(user_prompt, pdf_path, ai_foundry_model_endpoi
 #---------------------CODE FOR PROCESSING THE PDF STARTS HERE-------------------------------------------------------------
 
 # function for processing the PDF with ChatGPT (with parallelism)
-def process_pdf_with_chatGPT(pdf_path, user_prompt, mistral_ocr_markdown_response):
+def process_pdf_with_chatGPT(pdf_path, user_prompt, mistral_ocr_markdown_response, model_name, azure_openai_endpoint, azure_openai_api_key,model_prefix="gpt_vision_response"):
     def run_image_only():
-        return "gpt_vision_response_image_only", call_openai_vision_model(user_prompt, pdf_path)
+        return f"{model_prefix}_image_only", call_openai_vision_model(user_prompt, pdf_path, model_name, azure_openai_endpoint, azure_openai_api_key)
 
     def run_markdown_only():
         user_prompt_for_markdown_usage = (
@@ -908,7 +973,7 @@ def process_pdf_with_chatGPT(pdf_path, user_prompt, mistral_ocr_markdown_respons
             + "\n\nThe markdown from the Mistral OCR run on the Invoice PDF which can be used as supplementing knowledge is as follows:\n\n"
             + mistral_ocr_markdown_response
         )
-        return "gpt_vision_response_markdown_only", call_openai_vision_model(user_prompt_for_markdown_usage, None)
+        return f"{model_prefix}_markdown_only", call_openai_vision_model(user_prompt_for_markdown_usage, None, model_name, azure_openai_endpoint, azure_openai_api_key)
 
     def run_markdown_and_image():
         user_prompt_for_markdown_usage = (
@@ -916,7 +981,7 @@ def process_pdf_with_chatGPT(pdf_path, user_prompt, mistral_ocr_markdown_respons
             + "\n\nThe markdown from the Mistral OCR run on the Invoice PDF which can be used as supplementing knowledge is as follows:\n\n"
             + mistral_ocr_markdown_response
         )
-        return "gpt_vision_response_markdown_and_image", call_openai_vision_model(user_prompt_for_markdown_usage, pdf_path)
+        return f"{model_prefix}_markdown_and_image", call_openai_vision_model(user_prompt_for_markdown_usage, pdf_path, model_name, azure_openai_endpoint, azure_openai_api_key)
 
     results = {}
     with ThreadPoolExecutor() as executor:
@@ -933,7 +998,40 @@ def process_pdf_with_chatGPT(pdf_path, user_prompt, mistral_ocr_markdown_respons
     return results
         
 
+def process_pdf_with_mistral_api_models(pdf_path, user_prompt, mistral_ocr_markdown_response, model_name, model_prefix):
+    def run_image_only():
+        return f"{model_prefix}_image_only", call_mistral_api_model(user_prompt, pdf_path, model_name)
 
+    def run_markdown_only():
+        user_prompt_for_markdown_usage = (
+            user_prompt
+            + "\n\nThe markdown from the Mistral OCR run on the Invoice PDF which can be used as supplementing knowledge is as follows:\n\n"
+            + mistral_ocr_markdown_response
+        )
+        return f"{model_prefix}_markdown_only", call_mistral_api_model(user_prompt_for_markdown_usage, None, model_name)
+
+    def run_markdown_and_image():
+        user_prompt_for_markdown_usage = (
+            user_prompt
+            + "\n\nThe markdown from the Mistral OCR run on the Invoice PDF which can be used as supplementing knowledge is as follows:\n\n"
+            + mistral_ocr_markdown_response
+        )
+        return f"{model_prefix}_markdown_and_image", call_mistral_api_model(user_prompt_for_markdown_usage, pdf_path, model_name)
+
+    results = {}
+    with ThreadPoolExecutor() as executor:
+        futures = [
+            executor.submit(run_image_only),
+            executor.submit(run_markdown_only),
+            executor.submit(run_markdown_and_image),
+        ]
+        for future in as_completed(futures):
+            key, value = future.result()
+            print(f"{key.replace('_', ' ').title()}: {value}")
+            results[key] = value
+
+    return results
+    
 def process_pdf_with_ai_foundry_models(pdf_path, user_prompt, mistral_ocr_markdown_response, ai_foundry_model_endpoint, ai_foundry_model_api_key, model_prefix="ai_foundry_catalog_model_response"):
     def run_image_only():
         return f"{model_prefix}_image_only", call_ai_foundry_catalog_model(user_prompt, pdf_path, ai_foundry_model_endpoint, ai_foundry_model_api_key)
@@ -983,9 +1081,19 @@ def display_field_value_table(model_name, results_dict):
         ("ai_foundry_catalog_model_response_image_only", "Mistral Small Image Only"),
         ("ai_foundry_catalog_model_response_markdown_only", "Mistral Small Markdown Only"),
         ("ai_foundry_catalog_model_response_markdown_and_image", "Mistral Small Image+Markdown"),
-        ("microsoft_phi4_response_image_only", "Microsoft Phi-4 Image Only"),
-        ("microsoft_phi4_response_markdown_only", "Microsoft Phi-4 Markdown Only"),
-        ("microsoft_phi4_response_markdown_and_image", "Microsoft Phi-4 Image+Markdown"),
+        ("o4_mini_response_image_only", "o4-mini Image Only"),
+        ("o4_mini_response_markdown_only", "o4-mini Markdown Only"),
+        ("o4_mini_response_markdown_and_image", "o4-mini Image+Markdown"),
+        ("pixtral_12b_latest_response_image_only", "Pixtral-12B Image Only"),
+        ("pixtral_12b_latest_response_markdown_only", "Pixtral-12B Markdown Only"),
+        ("pixtral_12b_latest_response_markdown_and_image", "Pixtral-12B Image+Markdown"),
+        ("pixtral_large_latest_response_image_only", "Pixtral-Large Image Only"),
+        ("pixtral_large_latest_response_markdown_only", "Pixtral-Large Markdown Only"),
+        ("pixtral_large_latest_response_markdown_and_image", "Pixtral-Large Image+Markdown"),
+        ("mistral_medium_latest_response_image_only", "Mistral Medium Image Only"),
+        ("mistral_medium_latest_response_markdown_only", "Mistral Medium Markdown Only"),
+        ("mistral_medium_latest_response_markdown_and_image", "Mistral Medium Image+Markdown"),
+        
     ]:
         if key in results_dict and results_dict[key]:
             st.markdown(f"**{label}**")
@@ -1022,9 +1130,18 @@ def build_comparison_table(*results_dicts):
         ("ai_foundry_catalog_model_response_image_only", "Mistral Small Image Only"),
         ("ai_foundry_catalog_model_response_markdown_only", "Mistral Small Markdown Only"),
         ("ai_foundry_catalog_model_response_markdown_and_image", "Mistral Small Image+Markdown"),
-        ("microsoft_phi4_response_image_only", "Microsoft Phi-4 Image Only"),
-        ("microsoft_phi4_response_markdown_only", "Microsoft Phi-4 Markdown Only"),
-        ("microsoft_phi4_response_markdown_and_image", "Microsoft Phi-4 Image+Markdown"),
+        ("o4_mini_response_image_only", "o4-mini Image Only"),
+        ("o4_mini_response_markdown_only", "o4-mini Markdown Only"),
+        ("o4_mini_response_markdown_and_image", "o4-mini Image+Markdown"),
+        ("pixtral_12b_latest_response_image_only", "Pixtral-12B Image Only"),
+        ("pixtral_12b_latest_response_markdown_only", "Pixtral-12B Markdown Only"),
+        ("pixtral_12b_latest_response_markdown_and_image", "Pixtral-12B Image+Markdown"),
+        ("pixtral_large_latest_response_image_only", "Pixtral-Large Image Only"),
+        ("pixtral_large_latest_response_markdown_only", "Pixtral-Large Markdown Only"),
+        ("pixtral_large_latest_response_markdown_and_image", "Pixtral-Large Image+Markdown"),
+        ("mistral_medium_latest_response_image_only", "Mistral Medium Image Only"),
+        ("mistral_medium_latest_response_markdown_only", "Mistral Medium Markdown Only"),
+        ("mistral_medium_latest_response_markdown_and_image", "Mistral Medium Image+Markdown"),
     ]
     for results in results_dicts:
         for key, label in variant_labels:
@@ -1164,11 +1281,14 @@ if uploaded_file is not None:
         foundry_small_results = None
         foundry_large_results = None
         foundry_medium_results = None
-        microsoft_phi_four_results = None
+        o4_mini_results = None
+        pixtral_twelveb_latest_results = None
+        pixtral_large_latest_results = None
+        mistral_medium_latest_results = None
 
         if "OpenAI GPT-4-Vision-Preview" in selected_models:
             st.write("Running with OpenAI GPT-4-Vision-Preview...")
-            gpt_results = process_pdf_with_chatGPT(temp_pdf_path, user_prompt, mistral_ocr_markdown_response)
+            gpt_results = process_pdf_with_chatGPT(temp_pdf_path, user_prompt, mistral_ocr_markdown_response, gpt_model_deployment_name, azure_openai_swedencentral_endpoint, azure_openai_swedencentral_api_key)
             if isinstance(gpt_results, dict):
                 st.subheader("GPT-4 Vision Model Results")
                 st.json(gpt_results, expanded=True)
@@ -1190,20 +1310,46 @@ if uploaded_file is not None:
                 st.subheader("AI Foundry Model (Mistral Small 2503) Results")
                 st.text_area("AI Foundry Model (Mistral Small 2503) Results", value=str(foundry_small_results), height=400)
 
-        if "Microsoft Phi-4 Instruct" in selected_models:
-            st.write("Running with Microsoft Phi 4 Instruct Model (AI Foundry)...")
-            ai_foundry_model_endpoint = microsoft_phi_four_instruct_endpoint
-            ai_foundry_model_api_key = microsoft_phi_four_instruct_api_key
-            microsoft_phi_four_results = process_pdf_with_ai_foundry_models(
-                temp_pdf_path, user_prompt, mistral_ocr_markdown_response, ai_foundry_model_endpoint, ai_foundry_model_api_key, model_prefix="microsoft_phi4_response"
-            )
-            if isinstance(microsoft_phi_four_results, dict):
-                st.subheader("Microsoft Phi-4 Instruct Model Results")
-                st.json(microsoft_phi_four_results, expanded=True)
+        if "o4-mini" in selected_models:
+            st.write("Running with OpenAI o4-mini...")
+            o4_mini_results = process_pdf_with_chatGPT(temp_pdf_path, user_prompt, mistral_ocr_markdown_response, o4_mini_model_deployment_name, azure_openai_eastus_endpoint, azure_openai_eastus_api_key, model_prefix="o4_mini_response")
+            if isinstance(o4_mini_results, dict):
+                st.subheader("o4-mini Model Results")
+                st.json(o4_mini_results, expanded=True)
             else:
-                st.subheader("Microsoft Phi-4 Instruct Model Results")
-                st.text_area("Microsoft Phi-4 Instruct Model Results", value=str(microsoft_phi_four_results), height=400)
-                
+                st.subheader("o4-mini Model Results")
+                st.text_area("o4-mini Model Results", value=str(o4_mini_results), height=400)
+        
+        if "pixtral-12b-latest" in selected_models:
+            st.write("Running with Pixtral-12b-latest")
+            pixtral_twelveb_latest_results = process_pdf_with_mistral_api_models(temp_pdf_path, user_prompt, mistral_ocr_markdown_response, "pixtral-12b-latest", "pixtral_12b_latest_response")      
+            if isinstance(pixtral_twelveb_latest_results, dict):
+                st.subheader("Pixtral-12b-latest results")
+                st.json(pixtral_twelveb_latest_results, expanded=True)
+            else:
+                st.subheader("Pixtral-12b-Latest Results")
+                st.text_area("Pixtral-12b-latest Results", value=str(pixtral_twelveb_latest_results), height=400)
+        
+        if "pixtral-large-latest" in selected_models:
+            st.write("Running with Pixtral-large-latest")
+            pixtral_large_latest_results = process_pdf_with_mistral_api_models(temp_pdf_path, user_prompt, mistral_ocr_markdown_response, "pixtral-large-latest", "pixtral_large_latest_response")      
+            if isinstance(pixtral_twelveb_latest_results, dict):
+                st.subheader("Pixtral-large-latest results")
+                st.json(pixtral_large_latest_results, expanded=True)
+            else:
+                st.subheader("Pixtral-large-Latest Results")
+                st.text_area("Pixtral-large-latest Results", value=str(pixtral_large_latest_results), height=400)
+        
+        if "mistral-medium-latest" in selected_models:
+            st.write("Running with Mistral-medium-latest")
+            mistral_medium_latest_results = process_pdf_with_mistral_api_models(temp_pdf_path, user_prompt, mistral_ocr_markdown_response, "mistral-medium-latest", "mistral_medium_latest_response")      
+            if isinstance(mistral_medium_latest_results, dict):
+                st.subheader("Mistral-medium-latest results")
+                st.json(mistral_medium_latest_results, expanded=True)
+            else:
+                st.subheader("Mistral-medium-Latest Results")
+                st.text_area("Mistral-medium-latest Results", value=str(mistral_medium_latest_results), height=400)
+                       
         col_pdf, col_results = st.columns([1, 2])
 
         with col_pdf:
@@ -1217,7 +1363,7 @@ if uploaded_file is not None:
         with col_results:
             st.subheader("Field Comparison Table")
             # Only include non-None results
-            results_to_compare = [r for r in [gpt_results, foundry_small_results, microsoft_phi_four_results] if r]
+            results_to_compare = [r for r in [gpt_results, foundry_small_results, o4_mini_results, pixtral_twelveb_latest_results, pixtral_large_latest_results, mistral_medium_latest_results] if r]
             if results_to_compare:
                 df = build_comparison_table(*results_to_compare)
                 st.dataframe(df, use_container_width=True, hide_index=True)
